@@ -1,0 +1,28 @@
+{
+  "name": "csmju-bfts-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CSMJU Branch Financial Transparency System — Prisma schema & migrations (Phase 1 slice)",
+  "scripts": {
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "db:reset": "bash scripts/reset-db.sh",
+    "db:seed": "prisma db seed"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  }
+}

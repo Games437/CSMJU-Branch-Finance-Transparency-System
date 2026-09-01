@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: bfts_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bfts
+      POSTGRES_PASSWORD: bfts_dev_password
+      POSTGRES_DB: bfts_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - bfts_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bfts -d bfts_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bfts_pg_data:

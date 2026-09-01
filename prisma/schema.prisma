@@ -1,0 +1,365 @@
+// ============================================================================
+// CSMJU Branch Financial Transparency System (CSMJU-BFTS)
+// Prisma Schema — derived from:
+//   - BRANCH_FINANCIAL_TRANSPARENCY_SYSTEM_REQUIREMENTS.md
+//   - 01_BUSINESS_RULES_SPECIFICATION.md
+//   - 02_ROLE_PERMISSION_MATRIX.md
+//   - 04_ERD_DATABASE_SCHEMA.md
+//   - 07_SECURITY_MODEL.md
+//
+// IMPORTANT — READ BEFORE USING IN PRODUCTION:
+// Several fields/decisions below fill gaps that the spec explicitly leaves
+// open ("Section 31 — Critical Business Rules to Lock Before Coding" and
+// "Section 35 — Open Technical Questions"). Every such decision is marked
+// with `// ASSUMPTION:` so it can be found and revisited once the business
+// rule is actually locked. Do not treat these as final answers.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// Enums
+// ----------------------------------------------------------------------------
+
+enum Role {
+  STUDENT
+  TREASURER
+  BRANCH_HEAD
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  ADJUSTMENT
+}
+
+// ASSUMPTION: NEEDS_REVIEW is added beyond the four statuses named in
+// Section 14 of the requirements doc, to satisfy Business Rule #12
+// ("ข้อมูลแจ้งเตือนไม่ครบ → เข้าสถานะ NEEDS_REVIEW/MANUAL_REVIEW") for
+// income transactions created from an ambiguous/incomplete bank event.
+// It must never apply to EXPENSE (expenses only ever go
+// PENDING -> APPROVED/REJECTED -> optionally VOIDED).
+enum TransactionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  VOIDED
+  NEEDS_REVIEW
+}
+
+enum TransactionSourceType {
+  MANUAL // entered directly by an authorized human (e.g. Branch Head adjustment)
+  BANK_IMPORT // produced by the income integration pipeline
+  ADJUSTMENT // corrective entry, see Business Rule #7 "adjustment transaction"
+}
+
+// SELF-REVIEW FIX: originally only APPROVE/REJECT. VOID is added so that
+// "who voided a transaction and why" (Open Question #7/#8) is captured in
+// the same append-only, queryable table as approve/reject — instead of
+// being buried only inside audit_logs.metadata_json.
+enum ApprovalDecision {
+  APPROVE
+  REJECT
+  VOID
+}
+
+// Mirrors the pipeline in 06_INTEGRATION_SPECIFICATION.md Section 5:
+// Receive -> Authenticate source -> Persist raw event -> Parse -> Validate
+// -> Map source to year -> Deduplicate -> Create transaction -> Audit -> Ack
+enum IntegrationEventStatus {
+  RECEIVED
+  PARSED
+  VALIDATED
+  DUPLICATE
+  NEEDS_REVIEW
+  ERROR
+  PROCESSED
+}
+
+// ----------------------------------------------------------------------------
+// Users & Year Assignment
+// ----------------------------------------------------------------------------
+
+// Identity is owned by CSMJU Main Website (Section 27.1 / Open Question #1).
+// This table is a local projection of that identity, not a source of truth
+// for auth — it exists so financial records can have stable FKs.
+model User {
+  id             String  @id @default(uuid()) @db.Uuid
+  externalUserId String  @unique @map("external_user_id") // id issued by CSMJU Main Website
+  displayName    String  @map("display_name")
+  studentCode    String? @map("student_code") // optional, only if parent system supplies it
+  role           Role
+  active         Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  yearAssignments   UserYearAssignment[]
+  createdTxns       Transaction[]        @relation("TransactionCreatedBy")
+  approvedTxns      Transaction[]        @relation("TransactionApprovedBy")
+  uploadedEvidence  ExpenseEvidence[]
+  approvalActions   ApprovalAction[]
+  auditLogs         AuditLog[]
+
+  @@map("users")
+}
+
+// Answers Business Rule / Open Question #14 ("การเปลี่ยนเหรัญญิกประจำปีทำอย่างไร")
+// by making assignment a history table rather than a single FK on User:
+// closing one row (set activeTo) and opening a new one preserves history
+// and keeps Audit Log meaningful.
+//
+// ASSUMPTION: Only TREASURER assignments are expected to appear here in the
+// MVP. STUDENT has implicit branch-wide read scope and BRANCH_HEAD has
+// implicit all-years scope (per 02_ROLE_PERMISSION_MATRIX.md Section 2), so
+// neither needs a row. The `role` column is kept (per the ERD doc) to avoid
+// re-modeling later if that assumption turns out to be wrong.
+model UserYearAssignment {
+  id            String  @id @default(uuid()) @db.Uuid
+  userId        String  @map("user_id") @db.Uuid
+  yearAccountId String  @map("year_account_id") @db.Uuid
+  role          Role
+  activeFrom    DateTime @default(now()) @map("active_from")
+  activeTo      DateTime? @map("active_to") // null = currently active
+
+  user        User        @relation(fields: [userId], references: [id])
+  yearAccount YearAccount @relation(fields: [yearAccountId], references: [id])
+
+  @@index([yearAccountId, role])
+  // Enforced in the service layer, not the DB: at most one *active*
+  // (activeTo IS NULL) TREASURER assignment per year account. Postgres
+  // partial unique indexes could enforce this too — left as an app-level
+  // rule for now since Prisma schema syntax can't express a partial index
+  // directly without a raw migration.
+  @@map("user_year_assignments")
+}
+
+// ----------------------------------------------------------------------------
+// Year Accounts (Section 4 — Year-level Financial Model)
+// ----------------------------------------------------------------------------
+
+model YearAccount {
+  id       String @id @default(uuid()) @db.Uuid
+  yearLevel Int   @unique @map("year_level") // 1..4
+
+  name  String
+  // ASSUMPTION (Open Question #8, #15, #16 — Fiscal/Academic Year model is
+  // explicitly unresolved). We store a plain nullable label now so the
+  // dashboard can display it, WITHOUT building a full historical fiscal-year
+  // model. If the eventual answer is "yes, need historical fiscal years",
+  // this becomes a proper FiscalYear relation in a follow-up migration —
+  // do not assume this field is sufficient long-term.
+  academicYearLabel String? @map("academic_year_label")
+
+  // ASSUMPTION (Open Question #1, #2, #3 in Section 31 — who sets opening
+  // balance, from where, and whether it's editable, are all unresolved).
+  // Modeled as a plain field for now. Any change after go-live MUST go
+  // through an ADJUSTMENT transaction + Audit Log per Business Rule #7,
+  // never a direct UPDATE — this is a business-process rule the service
+  // layer must enforce; the column itself cannot enforce it.
+  openingBalance Decimal @default(0) @map("opening_balance") @db.Decimal(14, 2)
+
+  currency String  @default("THB")
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  userAssignments     UserYearAssignment[]
+  transactions        Transaction[]
+  integrationSources  IntegrationSource[]
+  auditLogs           AuditLog[]
+
+  @@map("year_accounts")
+}
+
+// ----------------------------------------------------------------------------
+// Transactions (Section 8 — Transaction Model / Section 9 — Balance Calc)
+// ----------------------------------------------------------------------------
+
+model Transaction {
+  id            String                @id @default(uuid()) @db.Uuid
+  yearAccountId String                @map("year_account_id") @db.Uuid
+  type          TransactionType
+  status        TransactionStatus     @default(PENDING)
+
+  // Decimal, not Float: financial amounts must never use binary floating
+  // point (this is a correctness decision the spec doesn't spell out but
+  // Business Rule "Financial Integrity" implies).
+  // SELF-REVIEW FIX: a CHECK (amount > 0) is added in the raw migration
+  // SQL — Prisma schema syntax has no native way to express column CHECK
+  // constraints, so it exists only in migration.sql, not here.
+  amount Decimal @db.Decimal(14, 2)
+
+  transactionDate DateTime @map("transaction_date") @db.Date
+  description     String
+  category        String?
+
+  sourceType TransactionSourceType @map("source_type")
+
+  // External reference (e.g. bank reference number) — nullable, used for
+  // human traceability. NOT the dedup key (see idempotencyKey below).
+  externalReference String? @map("external_reference")
+
+  // ASSUMPTION (Open Question #10 — "Duplicate Income ใช้ key อะไร" is
+  // explicitly unresolved). Until the real bank payload format is known
+  // (Section 06_INTEGRATION_SPECIFICATION.md Section 8), we use an
+  // application-computed deterministic key (e.g. hash of source + amount +
+  // timestamp + externalReference) so at least *a* uniqueness guarantee
+  // exists at the DB level from day one. This MUST be revisited once the
+  // real Krungthai/Connext payload shape is confirmed.
+  idempotencyKey String? @unique @map("idempotency_key")
+
+  createdBy  String    @map("created_by") @db.Uuid
+  approvedBy String?   @map("approved_by") @db.Uuid
+  approvedAt DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  yearAccount     YearAccount      @relation(fields: [yearAccountId], references: [id])
+  creator         User             @relation("TransactionCreatedBy", fields: [createdBy], references: [id])
+  approver        User?            @relation("TransactionApprovedBy", fields: [approvedBy], references: [id])
+  evidence        ExpenseEvidence[]
+  approvalActions ApprovalAction[]
+  integrationEvents IntegrationEvent[]
+
+  @@index([yearAccountId, transactionDate])
+  @@index([yearAccountId, status])
+  @@index([externalReference])
+  // SELF-REVIEW FIX: added to support the Treasurer "own transactions" list
+  // view (03_DETAILED_USER_FLOW.md Section 3), which filters by creator.
+  @@index([createdBy])
+  @@map("transactions")
+}
+
+// ----------------------------------------------------------------------------
+// Evidence (Section 15 — Bill / Evidence Management)
+// ----------------------------------------------------------------------------
+
+model ExpenseEvidence {
+  id             String  @id @default(uuid()) @db.Uuid
+  transactionId  String  @map("transaction_id") @db.Uuid
+  storageKey     String  @map("storage_key") // server-generated, never client filename/path
+  originalFilename String @map("original_filename")
+  mimeType       String  @map("mime_type")
+  sizeBytes      Int     @map("size_bytes")
+  checksum       String? // sha256 recommended, used to detect accidental re-upload of same file
+
+  uploadedBy String   @map("uploaded_by") @db.Uuid
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  // Business Rule #6: replacing a bill must not erase history — every
+  // upload is a new immutable row; `version` increments and `isCurrent`
+  // marks which one is authoritative for display. Enforced by service
+  // layer (set previous isCurrent=false in the same DB transaction).
+  version   Int     @default(1)
+  isCurrent Boolean @default(true) @map("is_current")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  uploader    User        @relation(fields: [uploadedBy], references: [id])
+
+  @@index([transactionId, isCurrent])
+  @@map("expense_evidence")
+}
+
+// ----------------------------------------------------------------------------
+// Approval Actions (Section 16 — Approval / Segregation of Duties)
+// ----------------------------------------------------------------------------
+
+model ApprovalAction {
+  id            String           @id @default(uuid()) @db.Uuid
+  transactionId String           @map("transaction_id") @db.Uuid
+  actorId       String           @map("actor_id") @db.Uuid
+  decision      ApprovalDecision
+  reason        String? // required by the service layer when decision = REJECT
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  actor       User        @relation(fields: [actorId], references: [id])
+
+  @@index([transactionId])
+  @@map("approval_actions")
+}
+
+// ----------------------------------------------------------------------------
+// Income Integration (Section 27.2 / 06_INTEGRATION_SPECIFICATION.md)
+// ----------------------------------------------------------------------------
+
+model IntegrationSource {
+  id                String  @id @default(uuid()) @db.Uuid
+  yearAccountId     String  @map("year_account_id") @db.Uuid
+  provider          String // e.g. "KRUNGTHAI" — kept as free text, not enum,
+                            // per Integration Spec Section 2: do not hard-code
+                            // a specific provider mechanism into the schema.
+  channel           String? // e.g. "CONNEXT_NOTIFICATION" — TBD per Open Question #4
+  externalSourceId  String? @map("external_source_id")
+  active            Boolean @default(true)
+  configurationRef  String? @map("configuration_ref") // pointer to secret-managed config, never raw secrets here
+
+  yearAccount YearAccount        @relation(fields: [yearAccountId], references: [id])
+  events      IntegrationEvent[]
+
+  @@map("integration_sources")
+}
+
+model IntegrationEvent {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  integrationSourceId String                  @map("integration_source_id") @db.Uuid
+  externalEventId     String                  @map("external_event_id")
+  receivedAt          DateTime                @default(now()) @map("received_at")
+  rawPayloadRef       String?                 @map("raw_payload_ref") // pointer to stored raw payload, not the payload itself (Security Model #8: don't store unnecessary raw sensitive payloads)
+  parsedStatus        IntegrationEventStatus  @default(RECEIVED) @map("parsed_status")
+  errorCode           String?                 @map("error_code")
+  processingAttempts  Int                     @default(0) @map("processing_attempts")
+  processedTransactionId String?              @map("processed_transaction_id") @db.Uuid
+
+  source              IntegrationSource @relation(fields: [integrationSourceId], references: [id])
+  processedTransaction Transaction?     @relation(fields: [processedTransactionId], references: [id])
+
+  // Uniqueness is scoped per source, per Integration Spec Section 6 and
+  // ERD Section 5 ("unique within provider/source").
+  @@unique([integrationSourceId, externalEventId])
+  @@map("integration_events")
+}
+
+// ----------------------------------------------------------------------------
+// Audit Log (Section 17 — append-only)
+// ----------------------------------------------------------------------------
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorId       String?  @map("actor_id") @db.Uuid // nullable for system-originated events
+  action        String
+  targetType    String   @map("target_type")
+  targetId      String   @map("target_id") @db.Uuid
+  yearAccountId String?  @map("year_account_id") @db.Uuid
+
+  beforeJson   Json? @map("before_json")
+  afterJson    Json? @map("after_json")
+  metadataJson Json? @map("metadata_json")
+
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  actor       User?        @relation(fields: [actorId], references: [id])
+  yearAccount YearAccount? @relation(fields: [yearAccountId], references: [id])
+
+  // NOTE: append-only is an application-layer + DB-permission guarantee
+  // (Security Model #6: "restrict write access to audit pipeline"), not
+  // something the Prisma schema itself can enforce. In production, the
+  // app's DB role should be granted INSERT/SELECT only on this table, with
+  // UPDATE/DELETE revoked even from the application's own DB user.
+  @@index([targetType, targetId, createdAt])
+  @@map("audit_logs")
+}
