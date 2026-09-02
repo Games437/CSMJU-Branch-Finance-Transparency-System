@@ -107,3 +107,89 @@ This schema does not attempt to answer the 18 unlocked business rules or
 balance ownership, fiscal-year rollover, real bank payload shape, auth
 handoff mechanism, etc.). Fields that stand in for these are marked
 `// ASSUMPTION:` in `schema.prisma`.
+
+---
+
+# Phase 2 — NestJS API: auth stub, RBAC guard, Users/YearAccounts
+
+## What's in this phase
+- `src/auth/` — `AuthGuard` + a swappable `AuthStrategy`. The only
+  implementation right now (`DevHeaderAuthStrategy`) reads an
+  `x-external-user-id` header and looks up the user's *role* from the
+  database — it never trusts a client-supplied role, so the trust
+  boundary from Security Model Section 2 holds even though the real
+  CSMJU SSO handoff (Open Question #1) isn't wired up yet. Swapping in
+  the real mechanism later should only mean replacing this one file.
+- `src/rbac/` — `RbacGuard` enforcing `role + assigned_year` per Security
+  Model Section 3, via two decorators: `@Roles(...)` and
+  `@YearScopeParam('paramName')`. The latter is implemented and will be
+  used starting Phase 3 (transactions/approvals) — no currently-built
+  route needs it yet, since `GET /year-accounts*` is branch-wide read for
+  all three roles per the permission matrix.
+- `src/users/` — `GET /api/v1/me`, `GET /api/v1/me/permissions`
+  (`permission-matrix.ts` is a code translation of
+  `02_ROLE_PERMISSION_MATRIX.md` — ambiguous cells like "policy-based"
+  are defaulted to `false`/deny, not guessed at; see comments in that
+  file).
+- `src/year-accounts/` — `GET /api/v1/year-accounts`,
+  `GET /api/v1/year-accounts/:id/summary` (real balance calculation:
+  opening balance + approved income − approved expense, computed via
+  Prisma `aggregate`, not stored/cached).
+
+## ⚠️ Sandbox limitation — could not run this end-to-end here
+Same root cause as Phase 1: this sandbox cannot reach
+`binaries.prisma.sh`, so `prisma generate` cannot produce a working
+Prisma Client here, which means the app cannot actually be booted or hit
+with real requests in this environment.
+
+What I *could* and did verify here instead:
+- `npx tsc --noEmit` passes with **zero errors** against a hand-written
+  type shim matching the real schema shapes — this catches wiring bugs
+  (wrong field names, bad imports, decorator misuse) but is not proof the
+  app runs.
+- All Prisma field/model names referenced in this phase were
+  cross-checked against `schema.prisma` from Phase 1, which *was*
+  validated against a real Postgres instance.
+
+**You should run the smoke test below on your machine**, where
+`prisma generate` will work normally:
+
+```bash
+npm install
+npm run db:up
+npm run prisma:migrate
+npm run prisma:generate
+npm run db:seed        # now also seeds a STUDENT user (s1) alongside t1/t2/bh1
+npm run start:dev
+```
+
+Then in another terminal:
+
+```bash
+# No header -> 401
+curl -i http://localhost:3000/api/v1/me
+
+# Each role sees different permissions
+curl -s -H "x-external-user-id: s1"  http://localhost:3000/api/v1/me/permissions | jq
+curl -s -H "x-external-user-id: t2"  http://localhost:3000/api/v1/me/permissions | jq
+curl -s -H "x-external-user-id: bh1" http://localhost:3000/api/v1/me/permissions | jq
+
+# All three roles can read year accounts (branch-wide read)
+curl -s -H "x-external-user-id: s1" http://localhost:3000/api/v1/year-accounts | jq
+
+# Balance summary (replace <yearAccountId> with the id printed by db:seed)
+curl -s -H "x-external-user-id: bh1" \
+  http://localhost:3000/api/v1/year-accounts/<yearAccountId>/summary | jq
+```
+
+If any of these don't behave as described, that's a real bug to report
+back — unlike the Phase 1 DB-constraint issue, none of this has been
+proven against a live server yet, only type-checked.
+
+## Known gaps going into Phase 3
+- `RbacGuard` has no "default deny" — a route with no `@Roles()` at all
+  is currently let through. Every handler in this codebase has `@Roles()`
+  applied, but there's no automated check enforcing that stays true as
+  more controllers are added.
+- `@YearScopeParam()` is unit-implementable but untested end-to-end
+  (no mutating year-scoped route exists yet).
