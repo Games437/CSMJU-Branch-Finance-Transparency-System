@@ -1,9 +1,9 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Role } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import { ROLES_KEY } from './roles.decorator';
 import { YEAR_SCOPE_PARAM_KEY } from './year-scope.decorator';
+import { YearScopeService } from './year-scope.service';
 import { AuthenticatedRequest } from '../auth/auth.guard';
 
 /**
@@ -20,12 +20,18 @@ import { AuthenticatedRequest } from '../auth/auth.guard';
  * "default deny" here yet because retrofitting that safely requires
  * auditing every existing route, which hasn't happened. Flagging this as
  * a known gap rather than a silent assumption.
+ *
+ * The actual "can this user touch this year" decision is delegated to
+ * YearScopeService, which is also used directly (not through this guard)
+ * by TransactionsService/ApprovalsService for actions where the year has
+ * to be looked up from a transactionId rather than read straight off the
+ * route/body — see year-scope.service.ts for why that split exists.
  */
 @Injectable()
 export class RbacGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly prisma: PrismaService,
+    private readonly yearScopeService: YearScopeService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -54,12 +60,6 @@ export class RbacGuard implements CanActivate {
       return true;
     }
 
-    // Branch Head is branch-wide by design (02_ROLE_PERMISSION_MATRIX.md
-    // Section 2) — no per-year check needed.
-    if (user.role === Role.BRANCH_HEAD) {
-      return true;
-    }
-
     const yearAccountId =
       request.params?.[yearScopeParam] ??
       (request.body as Record<string, unknown> | undefined)?.[yearScopeParam];
@@ -70,29 +70,7 @@ export class RbacGuard implements CanActivate {
       throw new ForbiddenException('Year scope could not be determined for this request.');
     }
 
-    if (user.role === Role.TREASURER) {
-      const assignment = await this.prisma.userYearAssignment.findFirst({
-        where: {
-          userId: user.id,
-          yearAccountId,
-          activeTo: null,
-        },
-      });
-
-      if (!assignment) {
-        // Deliberately the same error/shape as any other authorization
-        // failure — do not leak whether the yearAccountId exists at all,
-        // per Security Model Section 7 ("consistent error messages
-        // without excessive internal detail").
-        throw new ForbiddenException('You do not have permission to access this resource.');
-      }
-
-      return true;
-    }
-
-    // STUDENT should not normally reach a year-scoped route at all (their
-    // access is branch-wide read via non-scoped endpoints) — deny by
-    // default rather than assume a read-only exception applies.
-    throw new ForbiddenException('You do not have permission to access this resource.');
+    await this.yearScopeService.assertCanAccessYear(user, yearAccountId);
+    return true;
   }
 }

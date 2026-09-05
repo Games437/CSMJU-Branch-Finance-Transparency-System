@@ -193,3 +193,150 @@ proven against a live server yet, only type-checked.
   more controllers are added.
 - `@YearScopeParam()` is unit-implementable but untested end-to-end
   (no mutating year-scoped route exists yet).
+
+---
+
+# Phase 3 — Transaction CRUD, Evidence upload, and Approval workflow
+
+## What's in this phase
+- `src/audit/` — `AuditService`, `@Global()` like Auth/Rbac. Every
+  mutating action in this phase writes an audit log row, in the same DB
+  transaction as the state change it records.
+- `src/rbac/year-scope.service.ts` — shared "which year(s) can this user
+  touch" logic, used by reads, writes, and evidence access so it's
+  defined once instead of reimplemented per module.
+- `src/transactions/` — `POST /api/v1/expenses`,
+  `PATCH /api/v1/expenses/:id`, `GET /api/v1/transactions` (paginated,
+  filterable), `GET /api/v1/transactions/:id`. TREASURER reads/writes are
+  forced to their own scoped year even on plain reads — Role Matrix
+  Section 4 requires this, not just on mutations. STUDENT-facing
+  responses have `externalReference` stripped (Business Rule 10 privacy
+  — bank reference details are role-limited).
+- `src/evidence/` — `POST /api/v1/expenses/:id/evidence` (multipart file
+  upload; MIME allowlist: PDF/JPEG/PNG/WEBP; 10MB limit; server-generated
+  storage key, never the client's filename/path), `GET
+  /api/v1/evidence/:id` (authorized download). Files land on local disk
+  under `local-storage/evidence/` (gitignored) — see the storage note in
+  `evidence.service.ts` for why this needs to change before production
+  (no signed URLs, no object storage yet).
+- `src/approvals/` — `GET /api/v1/approvals/pending`,
+  `POST /api/v1/transactions/:id/approve`, `.../reject`, `.../void`, all
+  `BRANCH_HEAD`-only. Approve/reject/void run inside a single Prisma
+  interactive transaction covering the status update, the
+  `approval_action` insert, AND the audit log write — this directly fixes
+  the class of bug found in `prisma/seed.ts` during Phase 2 testing
+  (there, the same three things were done as separate, non-atomic
+  writes).
+
+## Business rules enforced (not just documented)
+- **Evidence required before approval** (Business Rule 4.2): approving a
+  PENDING expense with zero evidence rows attached returns 409, not a
+  silent pass. Checked at approve-time (not creation-time), since
+  creation and evidence-upload are two separate API calls and evidence
+  can't exist yet at creation.
+- **Segregation of duties**: `createdBy === actorId` is rejected on
+  approve/reject/void with a 403. Applies even to Branch Head.
+- **Status transitions**: approve/reject only from `PENDING`; void only
+  from `APPROVED`; evidence can only be attached while `PENDING`. Any
+  other current status → 409 Conflict, not a silent no-op.
+- **Void AND reject both require a non-empty reason** — Reject's
+  requirement comes from `03_DETAILED_USER_FLOW.md` Section 4 step 7
+  ("Require rejection reason when rejecting"), not just the permission
+  matrix's "with reason" note on Void.
+- **IDOR protection on reads, not just writes**: a Treasurer's
+  `GET /transactions?yearAccountId=<other year>` is a 403, not a
+  filtered-empty list — silently returning nothing would leak that the
+  id exists. Same for evidence download against another year's file.
+- **No year-transfer via PATCH**: `UpdateExpenseDto` has no
+  `yearAccountId` field at all, by design.
+- **Bill versioning, not overwrite** (Business Rule 6): re-uploading
+  evidence on the same transaction marks the previous row
+  `isCurrent: false` and inserts a new versioned row, inside one DB
+  transaction — never deletes or overwrites the old file/record.
+
+## ⚠️ Operational gap surfaced while building this (not a code bug)
+If there is only one Branch Head account, and that Branch Head creates
+an expense themselves (Role Matrix allows this — "✓/override if
+needed"), **no one can approve it** — segregation-of-duties blocks a
+Branch Head from approving their own entry, and no other role can
+approve at all. This is a real deadlock the original requirements don't
+address. Worth raising as a business question before this goes live:
+either Branch Head must never self-create expenses needing approval, or
+there needs to be a backup-approver mechanism.
+
+## ⚠️ Sandbox limitation (same as Phases 1 & 2)
+Could not boot the app or hit these endpoints with real requests here —
+`binaries.prisma.sh` is still network-blocked in this sandbox. Verified
+via `tsc --noEmit` (zero errors, shim extended to cover
+`ExpenseEvidence`/interactive `$transaction`/etc.) plus manual code
+review against `01_BUSINESS_RULES_SPECIFICATION.md`,
+`02_ROLE_PERMISSION_MATRIX.md`, and `03_DETAILED_USER_FLOW.md`. Three
+real bugs were caught this way before delivery (see git log:
+`RejectTransactionDto` had an optional reason, evidence-before-approval
+wasn't enforced at all, and the VOID audit action name had a typo
+producing `TRANSACTION_VOIDD`). **This still must be smoke-tested on
+your machine** — code review catches logic bugs, not runtime surprises.
+
+## Suggested smoke test (run after Phase 1 + 2 tests pass)
+```bash
+# As Treasurer (t2, Year 2): create an expense
+curl -s -X POST http://localhost:3000/api/v1/expenses \
+  -H "x-external-user-id: t2" -H "Content-Type: application/json" \
+  -d '{"yearAccountId":"<year2Id>","amount":500,"transactionDate":"2026-09-01","description":"Test expense","category":"SUPPLIES"}' | jq
+
+# Same treasurer trying another year's id -> 403
+curl -s -X POST http://localhost:3000/api/v1/expenses \
+  -H "x-external-user-id: t2" -H "Content-Type: application/json" \
+  -d '{"yearAccountId":"<someOtherYearId>","amount":500,"transactionDate":"2026-09-01","description":"Should fail","category":"SUPPLIES"}' | jq
+
+# Branch Head tries to approve with NO evidence yet -> 409
+curl -s -X POST -H "x-external-user-id: bh1" \
+  http://localhost:3000/api/v1/transactions/<transactionId>/approve | jq
+
+# Upload evidence (any small PDF/JPG/PNG on your machine)
+curl -s -X POST http://localhost:3000/api/v1/expenses/<transactionId>/evidence \
+  -H "x-external-user-id: t2" -F "file=@/path/to/receipt.pdf" | jq
+
+# Now approve succeeds
+curl -s -X POST -H "x-external-user-id: bh1" \
+  http://localhost:3000/api/v1/transactions/<transactionId>/approve | jq
+
+# Download the evidence (Branch Head can; Student cannot)
+curl -s -o receipt-downloaded.pdf -H "x-external-user-id: bh1" \
+  http://localhost:3000/api/v1/evidence/<evidenceId>
+curl -i -H "x-external-user-id: s1" \
+  http://localhost:3000/api/v1/evidence/<evidenceId>   # expect 403
+
+# Branch Head tries to approve their OWN transaction -> 403
+# (create one as bh1 first via POST /expenses, upload evidence as bh1,
+#  then try approving it as bh1)
+
+# Reject without a reason -> 400 (reason is required)
+curl -s -X POST http://localhost:3000/api/v1/transactions/<otherTransactionId>/reject \
+  -H "x-external-user-id: bh1" -H "Content-Type: application/json" -d '{}' | jq
+
+# Void requires a reason too -> 400 without one
+curl -s -X POST http://localhost:3000/api/v1/transactions/<transactionId>/void \
+  -H "x-external-user-id: bh1" -H "Content-Type: application/json" -d '{}' | jq
+
+# Balance reflects the approval
+curl -s -H "x-external-user-id: bh1" \
+  http://localhost:3000/api/v1/year-accounts/<year2Id>/summary | jq
+
+# Student sees the transaction but externalReference is masked (null)
+curl -s -H "x-external-user-id: s1" \
+  http://localhost:3000/api/v1/transactions/<transactionId> | jq '.externalReference'
+```
+
+## Known gaps going into Phase 4
+- Evidence storage is local disk, not object storage — no signed URLs,
+  no encryption-at-rest guarantees beyond the host filesystem's own.
+  Fine for local testing, not for production (see storage note in
+  `evidence.service.ts`).
+- `RbacGuard`'s "no default deny" gap from Phase 2 still applies.
+- Manual income creation and income import (`POST
+  /integrations/{sourceId}/income-events`) are not built — those depend
+  on the still-unresolved bank integration questions (Section 35).
+- No checksum computed/stored for uploaded evidence yet (schema supports
+  it as optional — Business Rule 6 says "when appropriate" — but nothing
+  populates it, so accidental duplicate uploads aren't detected).

@@ -30,3 +30,6 @@ Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
+
+# Local file storage (evidence uploads) — never commit uploaded files
+local-storage/
