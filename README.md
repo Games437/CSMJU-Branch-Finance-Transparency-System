@@ -340,3 +340,139 @@ curl -s -H "x-external-user-id: s1" \
 - No checksum computed/stored for uploaded evidence yet (schema supports
   it as optional — Business Rule 6 says "when appropriate" — but nothing
   populates it, so accidental duplicate uploads aren't detected).
+
+---
+
+# Phase 3.5 — Section 31 business rules resolved with CSMJU (2026-09-06)
+
+CSMJU answered the 18 open business rules from
+`BRANCH_FINANCIAL_TRANSPARENCY_SYSTEM_REQUIREMENTS.md` Section 31. Full
+answers are in the conversation history; summary of what changed in this
+codebase as a result:
+
+## Resolved — no code change needed
+| # | Question | Answer |
+|---|---|---|
+| 2 | Who sets Opening Balance | Branch Head |
+| 13 | Bill/audit log retention | Kept until explicit deletion order — already matches the append-only design |
+| 17 | Can money move between years | No — not building this |
+| 10 | Duplicate income key | Blocked on the integration team's payload spec — unchanged from Phase 1's assumption |
+
+## Resolved — REQUIRED a schema change (this is the big one)
+**#1 and #15/#16 together**: "Year 2" is not a fixed slot different
+cohorts rotate through — it is a **fixed cohort** (same students, same
+treasurer) that advances Year 1 → 2 → 3 → 4 together, carrying its
+balance forward. The ORIGINAL Phase 1 schema modeled `year_level` as
+globally unique per `YearAccount`, which is wrong for this: it can't
+represent "a new Year-1 cohort exists at the same time as the old
+Year-1-now-Year-2 cohort".
+
+Fixed via a new migration (`20260906000000_cohort_year_model`, NOT an
+edit to the already-applied `20260901000000_init` — see that migration's
+own header comment for why editing an applied migration is unsafe):
+- `year_accounts.academic_year_label` renamed to
+  `entry_academic_year_label` — now explicitly "the year this cohort
+  entered as Year 1", fixed forever, not a "current year" label.
+- The old global `UNIQUE(year_level)` is replaced with a **partial**
+  unique index: only one *active* cohort may hold a given `year_level`
+  at a time. Graduated (archived) cohorts don't count — verified with a
+  real Postgres instance: a second active Year-2 cohort is rejected, a
+  graduated (inactive) cohort at the same year_level is allowed.
+- New table `year_level_periods`: one row per cohort per academic year,
+  closed out (with a closing-balance snapshot) each time the cohort
+  advances. Without this, promoting `year_level` in place would destroy
+  the history CSMJU asked for (#16).
+- A backfill in the same migration gives every already-existing active
+  cohort a "current period" row, so the invariant holds immediately, not
+  just for cohorts created after this migration.
+
+**Status: fully built and tested**, not just designed. What was added on
+top of the schema change described above:
+- `YearAccountsService.advanceAcademicYear()` + `POST
+  /api/v1/year-accounts/advance-academic-year` (Branch Head only):
+  closes each active cohort's current period (with a closing-balance
+  snapshot), promotes year_level for cohorts below 4, archives the
+  Year-4 cohort (graduation), creates a new Year-1 cohort, and opens new
+  periods for everything that advanced — all in one transaction.
+  Idempotency-guarded: re-running for an academic year that's already
+  been advanced to is rejected, not silently repeated.
+- Verified against a real Postgres instance with all 4 year levels
+  active simultaneously at once (the highest-risk case: graduate +
+  promote three cohorts + create a new one, without ever colliding with
+  the partial unique index) — passed, including confirming the
+  idempotency guard's condition and that exactly one active cohort
+  remains per level afterward.
+- `seed.ts` updated to match the renamed column and to create the
+  matching `YearLevelPeriod` row a real cohort would have (previously
+  it would have failed to run at all after the rename).
+
+## Resolved — required an approval-workflow change (#9)
+CSMJU confirmed: automated bank-feed income still requires a Branch Head
+to confirm the amount before it counts toward the balance — this
+**overrides** the earlier Phase 1 schema comment that assumed
+auto-APPROVED income. Changed:
+- `BANK_IMPORT` income now starts at `NEEDS_REVIEW`, not `APPROVED`.
+- `ApprovalsService.confirmIncome()` + `POST
+  /api/v1/transactions/:id/confirm-income` (Branch Head only):
+  NEEDS_REVIEW -> APPROVED, same self-approval prevention and atomic
+  audit-log write as expense approval, but explicitly skips the
+  evidence-required check (income never has evidence) via a type guard
+  that also stops `approve()`/`confirmIncome()` from being called on the
+  wrong transaction type.
+- `GET /api/v1/approvals/pending` now surfaces both PENDING expenses and
+  NEEDS_REVIEW income in one queue.
+- `seed.ts` Scenario 4 rewritten to go through the real two-step flow
+  (create at NEEDS_REVIEW, then confirm) instead of creating income
+  pre-APPROVED.
+
+## Resolved — required an access-control change (#12)
+CSMJU confirmed: students CAN view uploaded bills (full transparency),
+reversing the earlier ASSUMPTION that defaulted to deny. Changed:
+- `permission-matrix.ts`: `viewProtectedBill` flipped to `true` for
+  STUDENT.
+- `GET /api/v1/evidence/:id` now allows STUDENT (unscoped, same
+  branch-wide read pattern STUDENT has everywhere else), not just
+  TREASURER (scoped)/BRANCH_HEAD.
+- `scripts/smoke-test-phase3.sh` Test 7 updated — it previously
+  asserted students get a 403 here, which is now the wrong expectation.
+
+## Resolved — Option A confirmed for #4
+CSMJU confirmed Option A: display-only, no enforcement. `GET
+/api/v1/year-accounts/:id/summary` now also returns
+`pendingExpenseTotal` (sum of that year's PENDING expenses) alongside
+the existing `balance` — purely informational, does not affect
+`balance` and does not block creating or approving anything. Verified
+against Postgres directly: opening 5000, two PENDING expenses (5000 +
+4000 = 9000) and one APPROVED expense (1000) correctly produced
+`approvedExpense: 1000`, `pendingExpenseTotal: 9000`, `balance: 4000`.
+
+If this is ever upgraded to Option B (block new expenses/approvals once
+approved+pending would go negative), that check belongs in
+`TransactionsService.createExpense`/`ApprovalsService.approve` — this
+field would still be the number that check reads from.
+
+## Confirmed — #18 (adjustment approver)
+CSMJU confirmed: Branch Head approves adjustments, same as Void. Not
+yet implemented — there is no ADJUSTMENT creation flow built at all
+yet (only the `TransactionSourceType.ADJUSTMENT` enum value exists in
+the schema). Recorded here so the decision doesn't need to be
+re-asked when that flow is eventually built.
+
+## Not yet done
+- Item #10 (duplicate-income key) remains blocked on the integration
+  team's payload spec, unchanged from Phase 1.
+
+## Resolved — required an ASSUMPTION change
+**#9**: income pulled automatically from LINE is NOT auto-trusted —
+Branch Head must confirm it before it counts toward balance. This
+reverses the Phase 1 assumption ("verified import defaults to
+APPROVED"). Not yet implemented: `TransactionStatus` already has
+`NEEDS_REVIEW` for this, but there's no confirm-income endpoint yet, and
+`ApprovalsService`'s evidence-required check needs to stay EXPENSE-only
+(it must not block confirming income, which has no evidence concept).
+
+**#12**: students CAN open uploaded bills (full transparency) — this
+REVERSES the Phase 3 assumption that gated evidence download to
+TREASURER/BRANCH_HEAD only. `permission-matrix.ts`
+(`viewProtectedBill: false` for STUDENT) and `EvidenceController`'s
+`@Roles()` on the download route both need updating — not yet done.

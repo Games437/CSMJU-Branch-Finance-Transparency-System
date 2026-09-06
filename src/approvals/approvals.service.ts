@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { TransactionStatus } from '@prisma/client';
+import { TransactionStatus, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -14,12 +14,17 @@ export class ApprovalsService {
   ) {}
 
   async listPending() {
-    // Only EXPENSE currently goes through this PENDING approval
-    // workflow — INCOME is either auto-APPROVED or NEEDS_REVIEW per the
-    // assumptions documented in schema.prisma, never PENDING in the
-    // approval-queue sense. If that changes, this filter needs revisiting.
+    // EXPENSE goes through PENDING; INCOME goes through NEEDS_REVIEW (see
+    // confirmIncome below) — both are "things a Branch Head needs to act
+    // on", so both are surfaced here even though they're different
+    // statuses and different actions (approve/reject vs confirm).
     return this.prisma.transaction.findMany({
-      where: { status: TransactionStatus.PENDING, type: 'EXPENSE' },
+      where: {
+        OR: [
+          { status: TransactionStatus.PENDING, type: TransactionType.EXPENSE },
+          { status: TransactionStatus.NEEDS_REVIEW, type: TransactionType.INCOME },
+        ],
+      },
       orderBy: { transactionDate: 'asc' },
     });
   }
@@ -33,6 +38,7 @@ export class ApprovalsService {
       toStatus: TransactionStatus.APPROVED,
       reason: undefined,
       setApprovedFields: true,
+      expectedType: TransactionType.EXPENSE,
     });
   }
 
@@ -45,6 +51,7 @@ export class ApprovalsService {
       toStatus: TransactionStatus.REJECTED,
       reason: dto.reason,
       setApprovedFields: false,
+      expectedType: TransactionType.EXPENSE,
     });
   }
 
@@ -62,6 +69,31 @@ export class ApprovalsService {
       toStatus: TransactionStatus.VOIDED,
       reason: dto.reason,
       setApprovedFields: false,
+      expectedType: undefined, // both INCOME and EXPENSE can be voided once approved
+    });
+  }
+
+  /**
+   * RESOLVED (Section 31 #9 — confirmed by CSMJU): automated bank-feed
+   * income is pulled in automatically, but a Branch Head must confirm
+   * the amount before it counts toward the balance. So BANK_IMPORT
+   * income transactions are created at NEEDS_REVIEW (not APPROVED — see
+   * schema.prisma's earlier ASSUMPTION note, now superseded by this
+   * confirmed rule), and this is the confirmation step. No evidence
+   * check (that's an EXPENSE-only concept), but everything else —
+   * self-approval prevention, atomic status+audit write — is identical
+   * to expense approval.
+   */
+  async confirmIncome(user: AuthenticatedUser, transactionId: string) {
+    return this.transitionStatus({
+      user,
+      transactionId,
+      decision: 'APPROVE',
+      fromStatus: TransactionStatus.NEEDS_REVIEW,
+      toStatus: TransactionStatus.APPROVED,
+      reason: undefined,
+      setApprovedFields: true,
+      expectedType: TransactionType.INCOME,
     });
   }
 
@@ -73,13 +105,24 @@ export class ApprovalsService {
     toStatus: TransactionStatus;
     reason: string | undefined;
     setApprovedFields: boolean;
+    expectedType: TransactionType | undefined;
   }) {
-    const { user, transactionId, decision, fromStatus, toStatus, reason, setApprovedFields } = args;
+    const { user, transactionId, decision, fromStatus, toStatus, reason, setApprovedFields, expectedType } = args;
 
     const transaction = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
 
     if (!transaction) {
       throw new NotFoundException('Transaction not found.');
+    }
+
+    if (expectedType && transaction.type !== expectedType) {
+      // Defensive check: approve()/confirmIncome() are two different
+      // endpoints for two different transaction types on purpose (an
+      // expense approval and an income confirmation are different
+      // real-world actions even though they share the same status
+      // transition shape). Calling the wrong one on the wrong type
+      // shouldn't silently "work".
+      throw new ConflictException(`Transaction is type ${transaction.type}, not ${expectedType}.`);
     }
 
     if (transaction.status !== fromStatus) {
@@ -97,7 +140,7 @@ export class ApprovalsService {
       throw new ForbiddenException('You cannot act on a transaction you created yourself.');
     }
 
-    if (decision === 'APPROVE') {
+    if (decision === 'APPROVE' && transaction.type === TransactionType.EXPENSE) {
       // Business Rule 4.2: "Expense ต้องมีหลักฐานบิล/เอกสารประกอบก่อนเข้าสู่
       // ขั้นตอนตรวจสอบ" (an expense must have evidence before entering the
       // review step). Checked here rather than at expense-creation time —
@@ -107,7 +150,8 @@ export class ApprovalsService {
       // call order. Placed after the existence/status/self-approval
       // checks above so a bad transactionId or wrong-status transaction
       // still gets its own correct error instead of a misleading
-      // "no evidence" message.
+      // "no evidence" message. Gated to EXPENSE only — confirmIncome()
+      // also passes decision='APPROVE' but income never has evidence.
       const evidenceCount = await this.prisma.expenseEvidence.count({ where: { transactionId } });
       if (evidenceCount === 0) {
         throw new ConflictException('This expense has no evidence attached and cannot be approved.');
@@ -124,15 +168,14 @@ export class ApprovalsService {
     // Prisma's interactive transaction form here (not the array form)
     // specifically so AuditService.record can be included in the same
     // atomic unit rather than firing afterwards as a separate write.
-    // Explicit mapping instead of string concatenation — decision + "D"
-    // works for APPROVE->APPROVED and REJECT->REJECTED but silently
-    // produces "VOIDD" for VOID. Caught by inspection before it ended up
-    // in an audit log that's supposed to be a trustworthy permanent record.
-    const auditAction: Record<typeof decision, string> = {
-      APPROVE: 'TRANSACTION_APPROVED',
-      REJECT: 'TRANSACTION_REJECTED',
-      VOID: 'VOID_TRANSACTION', // matches the example event name in Business Rules Section 9
-    };
+    const auditAction =
+      decision === 'APPROVE' && transaction.type === TransactionType.INCOME
+        ? 'INCOME_CONFIRMED'
+        : ({
+            APPROVE: 'TRANSACTION_APPROVED',
+            REJECT: 'TRANSACTION_REJECTED',
+            VOID: 'VOID_TRANSACTION', // matches the example event name in Business Rules Section 9
+          } satisfies Record<typeof decision, string>)[decision];
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const updatedTransaction = await tx.transaction.update({
@@ -155,7 +198,7 @@ export class ApprovalsService {
       await this.audit.record(
         {
           actorId: user.id,
-          action: auditAction[decision],
+          action: auditAction,
           targetType: 'Transaction',
           targetId: transactionId,
           yearAccountId: transaction.yearAccountId,

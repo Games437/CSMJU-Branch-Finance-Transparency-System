@@ -14,7 +14,24 @@ const prisma = new PrismaClient();
 
 async function main() {
   const year2 = await prisma.yearAccount.create({
-    data: { yearLevel: 2, name: "Year 2", openingBalance: 5000 },
+    data: {
+      yearLevel: 2,
+      name: "Year 2",
+      openingBalance: 5000,
+      // Cohort model (Section 31 #1/#15/#16): this cohort entered as
+      // Year 1 in academic year 2567, and is now in its Year-2 period.
+      entryAcademicYearLabel: "2567",
+    },
+  });
+
+  // Every active cohort needs a "current period" row (endedAt = null) —
+  // this is normally created by the not-yet-built
+  // YearAccountsService.advanceAcademicYear operation, but seed.ts
+  // creates the YearAccount directly, bypassing that service, so it has
+  // to create the matching period row itself to keep the invariant true
+  // in a freshly-seeded database.
+  await prisma.yearLevelPeriod.create({
+    data: { yearAccountId: year2.id, academicYear: "2568", yearLevel: 2 },
   });
 
   const treasurerA = await prisma.user.create({
@@ -76,15 +93,21 @@ async function main() {
   console.log("✅ PASS: treasurer handover (close old + open new) succeeded");
 
   // --- Scenario 4: duplicate bank notification must not create two income rows ---
-  // status explicitly APPROVED: this row represents income that already
-  // passed validation/dedup (see idempotencyKey below), so it should be
-  // counted in the balance immediately, matching the
-  // "Income defaults to APPROVED unless ambiguous -> NEEDS_REVIEW"
-  // assumption documented in schema.prisma. Leaving status unset here
-  // would silently fall back to the schema default (PENDING) and exclude
-  // it from the balance summary — this was an earlier bug in this seed
-  // script, not in the balance calculation itself.
-  await prisma.transaction.create({
+  // RESOLVED (Section 31 #9 — confirmed by CSMJU): the amount comes in
+  // automatically from the bank feed, but a Branch Head must confirm it
+  // before it counts toward the balance — so BANK_IMPORT income starts
+  // at NEEDS_REVIEW, not APPROVED (superseding this seed script's
+  // earlier "auto-APPROVED" version, which matched an assumption that's
+  // since been overridden by the actual business rule).
+  //
+  // createdBy is set to treasurerB rather than branchHead here as a
+  // placeholder: the real "creator" identity for an automated
+  // integration-created row is still undecided (the integration
+  // pipeline itself isn't built yet) — using branchHead would make the
+  // confirmation step below a self-approval, which
+  // ApprovalsService.confirmIncome() would correctly reject, so that
+  // placeholder choice matters for this script to work at all.
+  const income = await prisma.transaction.create({
     data: {
       yearAccountId: year2.id,
       type: "INCOME",
@@ -92,9 +115,9 @@ async function main() {
       transactionDate: new Date("2026-08-30"),
       description: "Bank notification",
       sourceType: "BANK_IMPORT",
-      createdBy: branchHead.id,
+      createdBy: treasurerB.id,
       idempotencyKey: "dedupe-key-abc",
-      status: "APPROVED",
+      status: "NEEDS_REVIEW",
     },
   });
   try {
@@ -106,15 +129,27 @@ async function main() {
         transactionDate: new Date("2026-08-30"),
         description: "Bank notification (retry delivery)",
         sourceType: "BANK_IMPORT",
-        createdBy: branchHead.id,
+        createdBy: treasurerB.id,
         idempotencyKey: "dedupe-key-abc",
-        status: "APPROVED",
+        status: "NEEDS_REVIEW",
       },
     });
     console.error("❌ FAIL: duplicate idempotencyKey was accepted twice");
   } catch {
     console.log("✅ PASS: duplicate bank notification rejected (TC-INC-02)");
   }
+
+  // Confirm the income (mirrors ApprovalsService.confirmIncome — seed.ts
+  // talks to Prisma directly rather than going through the Nest app, so
+  // it replicates the same three writes that method makes atomically).
+  await prisma.transaction.updateMany({
+    where: { id: income.id },
+    data: { status: "APPROVED", approvedBy: branchHead.id, approvedAt: new Date() },
+  });
+  await prisma.approvalAction.create({
+    data: { transactionId: income.id, actorId: branchHead.id, decision: "APPROVE" },
+  });
+  console.log("✅ PASS: income confirmed by Branch Head (NEEDS_REVIEW -> APPROVED)");
 
   // --- Scenario 5: VOID is recorded with actor + reason, same table as approve/reject ---
   const expense = await prisma.transaction.create({

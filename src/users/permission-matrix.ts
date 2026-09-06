@@ -48,7 +48,7 @@ export function getPermissionSet(role: Role): PermissionSet {
         viewIncome: true,
         viewExpense: true,
         viewPublicBillPreview: true,
-        viewProtectedBill: false, // "✗/policy" — ASSUMPTION: deny until policy is set
+        viewProtectedBill: true, // RESOLVED (Section 31 #12): students can view bills — full transparency
         createIncomeManually: false,
         importIncome: false,
         createExpense: false,

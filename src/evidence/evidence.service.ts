@@ -159,10 +159,10 @@ export class EvidenceService {
       throw new NotFoundException('Evidence not found.');
     }
 
-    // STUDENT never reaches here at all — @Roles(TREASURER, BRANCH_HEAD)
-    // on the controller route blocks it at the guard level (Role Matrix:
-    // "View protected bill: ✗/policy" for Student). Only the TREASURER
-    // scope check is needed here.
+    // Only TREASURER is scope-checked here. STUDENT is unscoped
+    // (branch-wide read, same as everywhere else for this role — Role
+    // Matrix: viewProtectedBill resolved to true for Section 31 #12) and
+    // BRANCH_HEAD is branch-wide by design.
     if (user.role === Role.TREASURER) {
       await this.yearScope.assertCanAccessYear(user, evidence.transaction.yearAccountId);
     }

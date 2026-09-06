@@ -39,12 +39,11 @@ export class EvidenceController {
   }
 
   @Get('evidence/:evidenceId')
-  @Roles(Role.TREASURER, Role.BRANCH_HEAD)
-  // STUDENT deliberately excluded from @Roles() here, not just checked
-  // inside the service — the permission-matrix.ts file already marks
-  // viewProtectedBill: false for STUDENT, so a request that never should
-  // have been made gets a clean 403 at the guard level rather than
-  // reaching the service at all.
+  // RESOLVED (Section 31 #12 — confirmed by CSMJU): students can view
+  // uploaded bills, for full transparency. STUDENT added here and
+  // permission-matrix.ts's viewProtectedBill flipped to true to match —
+  // previously both denied students, see git history for that version.
+  @Roles(Role.STUDENT, Role.TREASURER, Role.BRANCH_HEAD)
   async download(
     @CurrentUser() user: AuthenticatedUser,
     @Param('evidenceId') evidenceId: string,

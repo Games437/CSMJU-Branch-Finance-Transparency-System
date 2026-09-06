@@ -47,6 +47,11 @@ check "create expense succeeds" "201" "$CREATE_STATUS"
 echo "  transactionId: $TXN_ID"
 
 echo ""
+echo "== Test 1b: pendingExpenseTotal reflects the still-PENDING expense (RESOLVED Section 31 #4, Option A: display-only) =="
+PENDING_TOTAL=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.pendingExpenseTotal')
+check "pendingExpenseTotal includes the new 500 expense" "500" "$PENDING_TOTAL"
+
+echo ""
 echo "== Test 2: same treasurer tries a fake/other year id — expect 403 =="
 OTHER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/expenses" \
   -H "x-external-user-id: t2" -H "Content-Type: application/json" \
@@ -91,10 +96,10 @@ STUDENT_EXT_REF=$(curl -s -H "x-external-user-id: s1" "$BASE/transactions/$TXN_I
 check "externalReference masked for student" "null" "$STUDENT_EXT_REF"
 
 echo ""
-echo "== Test 7: Student CANNOT download evidence — expect 403 =="
+echo "== Test 7: Student CAN download evidence (RESOLVED Section 31 #12: full transparency) — expect 200 =="
 STUDENT_DOWNLOAD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   -H "x-external-user-id: s1" "$BASE/evidence/$EVIDENCE_ID")
-check "student blocked from evidence download" "403" "$STUDENT_DOWNLOAD_STATUS"
+check "student can download evidence" "200" "$STUDENT_DOWNLOAD_STATUS"
 
 echo ""
 echo "== Test 8: Branch Head CAN download evidence — expect 200 =="
@@ -134,6 +139,78 @@ BALANCE=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/su
 echo "  Year 2 balance is now: $BALANCE"
 
 rm -f "$TMP_PNG"
+
+# ----------------------------------------------------------------------
+# Phase 3.5 additions: confirm-income and advance-academic-year.
+#
+# There is no public API to CREATE a NEEDS_REVIEW income row yet (that
+# only happens via the bank-import integration pipeline, which isn't
+# built — see Section 35). To test confirm-income at all, this script
+# inserts one directly via `docker exec ... psql` against the same
+# Postgres container `npm run db:up` starts, rather than skipping the
+# test or requiring a local psql client the user may not have.
+# ----------------------------------------------------------------------
+
+echo ""
+echo "== Test 13: confirm-income moves a NEEDS_REVIEW income to APPROVED =="
+INCOME_TXN_ID=$(docker exec -i bfts_postgres_dev psql -q -t -A -U bfts -d bfts_dev -c "
+INSERT INTO transactions (year_account_id, type, amount, transaction_date, description, source_type, created_by, status)
+SELECT '$YEAR2_ID', 'INCOME', 750, '2026-09-01', 'Smoke test income', 'BANK_IMPORT',
+  (SELECT id FROM users WHERE external_user_id='t2'), 'NEEDS_REVIEW'
+RETURNING id;
+" | head -n1 | tr -d '[:space:]')
+echo "  incomeTransactionId: $INCOME_TXN_ID"
+
+CONFIRM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  -H "x-external-user-id: bh1" "$BASE/transactions/$INCOME_TXN_ID/confirm-income")
+check "confirm-income succeeds" "201" "$CONFIRM_STATUS"
+
+INCOME_STATUS_AFTER=$(curl -s -H "x-external-user-id: bh1" "$BASE/transactions/$INCOME_TXN_ID" | jq -r '.status')
+check "income status is now APPROVED" "APPROVED" "$INCOME_STATUS_AFTER"
+
+echo ""
+echo "== Test 14: confirm-income rejects being called on an EXPENSE — expect 409 =="
+WRONG_TYPE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  -H "x-external-user-id: bh1" "$BASE/transactions/$TXN_ID/confirm-income")
+check "confirm-income rejects non-income transaction" "409" "$WRONG_TYPE_STATUS"
+
+# ----------------------------------------------------------------------
+# advance-academic-year is placed LAST deliberately: it mutates every
+# active cohort's yearLevel branch-wide, so nothing after this point in
+# the script should assume $YEAR2_ID is still "year_level == 2".
+# ----------------------------------------------------------------------
+
+echo ""
+echo "== Test 15: advance-academic-year promotes the cohort and creates a new Year 1 =="
+ADVANCE_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$BASE/year-accounts/advance-academic-year" \
+  -H "x-external-user-id: bh1" -H "Content-Type: application/json" \
+  -d '{"newAcademicYear":"2569"}')
+ADVANCE_STATUS=$(echo "$ADVANCE_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+ADVANCE_BODY=$(echo "$ADVANCE_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
+check "advance-academic-year succeeds" "201" "$ADVANCE_STATUS"
+echo "  response: $ADVANCE_BODY"
+
+PROMOTED_COUNT=$(echo "$ADVANCE_BODY" | jq -r '.promotedCount')
+check "exactly 1 cohort promoted (only Year 2 existed, nothing was at Year 4 to graduate)" "1" "$PROMOTED_COUNT"
+
+echo ""
+echo "== Test 16: the promoted cohort now shows yearLevel 3 (same id) =="
+NEW_LEVEL=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r --arg id "$YEAR2_ID" '.[] | select(.id==$id) | .yearLevel')
+check "cohort promoted from 2 to 3" "3" "$NEW_LEVEL"
+
+echo ""
+echo "== Test 17: re-running advance-academic-year for the same year is rejected — expect 409 =="
+REPEAT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/year-accounts/advance-academic-year" \
+  -H "x-external-user-id: bh1" -H "Content-Type: application/json" \
+  -d '{"newAcademicYear":"2569"}')
+check "duplicate advance-academic-year rejected (idempotency)" "409" "$REPEAT_STATUS"
+
+echo ""
+echo "== Test 18: Student cannot call advance-academic-year — expect 403 =="
+STUDENT_ADVANCE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/year-accounts/advance-academic-year" \
+  -H "x-external-user-id: s1" -H "Content-Type: application/json" \
+  -d '{"newAcademicYear":"2570"}')
+check "student blocked from advance-academic-year" "403" "$STUDENT_ADVANCE_STATUS"
 
 echo ""
 echo "================================"

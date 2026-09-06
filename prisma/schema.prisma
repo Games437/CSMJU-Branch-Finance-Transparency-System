@@ -145,29 +145,50 @@ model UserYearAssignment {
 // Year Accounts (Section 4 — Year-level Financial Model)
 // ----------------------------------------------------------------------------
 
+// RESOLVED 2026-09 (Section 31 items #1, #15, #16 — confirmed by CSMJU):
+// "Year 2" is NOT a fixed slot that different cohorts rotate through —
+// it's a FIXED COHORT that advances through year levels together, with
+// the SAME treasurer for all 4 years. When a new academic year starts,
+// existing cohorts' yearLevel increments by 1, the Year-4 cohort
+// graduates (archived, active=false), and a brand new Year-1 YearAccount
+// is created for the incoming cohort. This is why yearLevel is no longer
+// globally unique — only unique among currently-ACTIVE accounts (see the
+// partial unique index in migration.sql; Prisma schema syntax can't
+// express a partial index, same situation as the active-treasurer
+// constraint from Phase 1).
+//
+// UserYearAssignment needed NO changes for this: since yearAccountId is
+// the permanent cohort identity, a treasurer assigned to this id
+// naturally stays their treasurer across all 4 years — "same treasurer
+// through Year 1-4" falls out of the existing design for free.
 model YearAccount {
-  id       String @id @default(uuid()) @db.Uuid
-  yearLevel Int   @unique @map("year_level") // 1..4
+  id        String @id @default(uuid()) @db.Uuid
+  yearLevel Int    @map("year_level") // current level, 1..4; NOT globally unique — see partial unique index in migration.sql
 
-  name  String
-  // ASSUMPTION (Open Question #8, #15, #16 — Fiscal/Academic Year model is
-  // explicitly unresolved). We store a plain nullable label now so the
-  // dashboard can display it, WITHOUT building a full historical fiscal-year
-  // model. If the eventual answer is "yes, need historical fiscal years",
-  // this becomes a proper FiscalYear relation in a follow-up migration —
-  // do not assume this field is sufficient long-term.
-  academicYearLabel String? @map("academic_year_label")
+  name String
 
-  // ASSUMPTION (Open Question #1, #2, #3 in Section 31 — who sets opening
-  // balance, from where, and whether it's editable, are all unresolved).
-  // Modeled as a plain field for now. Any change after go-live MUST go
-  // through an ADJUSTMENT transaction + Audit Log per Business Rule #7,
-  // never a direct UPDATE — this is a business-process rule the service
-  // layer must enforce; the column itself cannot enforce it.
+  // RESOLVED: fixed at creation, e.g. "2569" — the academic year this
+  // cohort ENTERED as Year 1. Never changes as the cohort advances
+  // (unlike yearLevel above). Renamed from the earlier ambiguous
+  // "academicYearLabel" (which read as "current" label) to make this
+  // fixed-forever meaning explicit.
+  entryAcademicYearLabel String? @map("entry_academic_year_label")
+
+  // RESOLVED (Section 31 #1, #2): opening balance is set ONCE, by the
+  // Branch Head, when a new Year-1 cohort is created — either at initial
+  // system setup or as part of the annual advancement operation (see
+  // YearAccountsService.advanceAcademicYear). Any change after that MUST
+  // go through an ADJUSTMENT transaction + Audit Log per Business Rule
+  // #7, never a direct UPDATE.
   openingBalance Decimal @default(0) @map("opening_balance") @db.Decimal(14, 2)
 
-  currency String  @default("THB")
-  active   Boolean @default(true)
+  currency String @default("THB")
+  // RESOLVED: active=false means this cohort has graduated (finished
+  // Year 4) and is archived — its data and history are retained
+  // permanently (Section 31 #13: "จนกว่าจะมีคำสั่งลบ"), just excluded
+  // from current-year listings and from the one-active-per-yearLevel
+  // constraint.
+  active Boolean @default(true)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
@@ -176,8 +197,47 @@ model YearAccount {
   transactions        Transaction[]
   integrationSources  IntegrationSource[]
   auditLogs           AuditLog[]
+  yearLevelPeriods    YearLevelPeriod[]
 
+  // Partial unique index (year_level WHERE active = true) lives in
+  // migration.sql only — same limitation as the active-treasurer
+  // constraint from Phase 1: Prisma schema syntax cannot express a
+  // partial unique index. DO NOT run `prisma db push` on this project;
+  // it would not know to recreate this constraint.
   @@map("year_accounts")
+}
+
+// RESOLVED (Section 31 #15, #16 — confirmed by CSMJU): cohorts are fixed
+// ("รุ่นคงที่"), so a historical record of "which year_level this cohort
+// held during which academic year, and what its balance was at the end
+// of that year" is required — otherwise promoting yearLevel in place
+// would silently destroy that history. One row is created per cohort
+// per academic year: opened when the cohort starts that year (either at
+// initial Year-1 creation, or by YearAccountsService.advanceAcademicYear
+// when it promotes the cohort into a new level), closed (endedAt +
+// closingBalance set) when the NEXT advancement happens. A cohort's
+// CURRENT period is the one row with endedAt = null.
+model YearLevelPeriod {
+  id            String  @id @default(uuid()) @db.Uuid
+  yearAccountId String  @map("year_account_id") @db.Uuid
+  academicYear  String  @map("academic_year") // e.g. "2568" — the year this period covers
+  yearLevel     Int     @map("year_level") // 1..4, the level held during this period
+
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at") // null = this is the cohort's current/active period
+
+  // Set only when the period ends (via advanceAcademicYear), from the
+  // same balance calculation YearAccountsService.getSummary uses —
+  // this is a snapshot, not a second source of truth for the live
+  // balance (which is always derived from transactions, per Business
+  // Rule 7).
+  closingBalance Decimal? @map("closing_balance") @db.Decimal(14, 2)
+
+  yearAccount YearAccount @relation(fields: [yearAccountId], references: [id])
+
+  @@unique([yearAccountId, academicYear])
+  @@index([yearAccountId, endedAt])
+  @@map("year_level_periods")
 }
 
 // ----------------------------------------------------------------------------

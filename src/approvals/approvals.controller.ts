@@ -39,6 +39,12 @@ export class ApprovalsController {
     return this.approvalsService.reject(user, transactionId, dto);
   }
 
+  @Post('transactions/:transactionId/confirm-income')
+  @Roles(Role.BRANCH_HEAD)
+  confirmIncome(@CurrentUser() user: AuthenticatedUser, @Param('transactionId') transactionId: string) {
+    return this.approvalsService.confirmIncome(user, transactionId);
+  }
+
   @Post('transactions/:transactionId/void')
   @Roles(Role.BRANCH_HEAD)
   void_(
