@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import { ROLES_KEY } from './roles.decorator';
 import { YEAR_SCOPE_PARAM_KEY } from './year-scope.decorator';
 import { YearScopeService } from './year-scope.service';
+import { IS_PUBLIC_KEY } from './public.decorator';
 import { AuthenticatedRequest } from '../auth/auth.guard';
 
 /**
@@ -14,12 +15,13 @@ import { AuthenticatedRequest } from '../auth/auth.guard';
  *   @Roles(Role.TREASURER, Role.BRANCH_HEAD)
  *   @YearScopeParam('yearAccountId')   // only if the route touches one year
  *
- * A route with NO @Roles() decorator is NOT protected by this guard at
- * all — it will be allowed through. Every controller in this codebase
- * should have @Roles() on every handler; there is deliberately no
- * "default deny" here yet because retrofitting that safely requires
- * auditing every existing route, which hasn't happened. Flagging this as
- * a known gap rather than a silent assumption.
+ * DEFAULT-DENY: a route with no @Roles() decorator is now REJECTED, not
+ * allowed through. This was flipped from the original default-allow
+ * behavior after auditing every existing controller in this codebase
+ * and confirming every handler already had @Roles() applied — so this
+ * change should affect zero currently-working routes, only future ones
+ * that forget the decorator. Use @Public() (see public.decorator.ts)
+ * for the rare route that should intentionally skip this check.
  *
  * The actual "can this user touch this year" decision is delegated to
  * YearScopeService, which is also used directly (not through this guard)
@@ -35,13 +37,28 @@ export class RbacGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean | undefined>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) {
+      return true;
+    }
+
     const requiredRoles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
 
     if (!requiredRoles || requiredRoles.length === 0) {
-      return true;
+      // Fail closed: no @Roles() and no @Public() means this route's
+      // access policy was never decided. Denying is the safe default —
+      // an accidentally-open endpoint is a much worse failure mode than
+      // an accidentally-blocked one, which at least fails loudly and
+      // gets noticed immediately during testing.
+      throw new ForbiddenException(
+        'This route has no access policy configured (@Roles() or @Public()) — denying by default.',
+      );
     }
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();

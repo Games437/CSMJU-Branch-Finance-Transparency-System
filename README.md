@@ -333,13 +333,25 @@ curl -s -H "x-external-user-id: s1" \
   no encryption-at-rest guarantees beyond the host filesystem's own.
   Fine for local testing, not for production (see storage note in
   `evidence.service.ts`).
-- `RbacGuard`'s "no default deny" gap from Phase 2 still applies.
 - Manual income creation and income import (`POST
   /integrations/{sourceId}/income-events`) are not built — those depend
   on the still-unresolved bank integration questions (Section 35).
 - No checksum computed/stored for uploaded evidence yet (schema supports
   it as optional — Business Rule 6 says "when appropriate" — but nothing
   populates it, so accidental duplicate uploads aren't detected).
+
+## Resolved — RBAC default-deny
+`RbacGuard` previously allowed any route with no `@Roles()` decorator
+through unprotected. Audited every controller in the codebase first
+(confirmed every existing handler already had `@Roles()` applied), then
+flipped the default: a route with neither `@Roles()` nor the new
+`@Public()` escape hatch is now rejected with 403, not allowed through.
+`src/rbac/public.decorator.ts` is the explicit opt-out for the rare
+route that should genuinely skip this check — nothing currently uses
+it. `tsc --noEmit` clean; not yet re-run through
+`scripts/smoke-test-phase3.sh` on a real server (the change should be
+invisible to all 19 existing checks, since no route relied on the old
+default-allow behavior, but that's a claim to verify, not assume).
 
 ---
 
