@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Deliberately no @media (prefers-color-scheme: dark) override — the
+   "passbook" concept is a light, paper-like surface by design; a dark
+   mode would need its own considered palette, not an inverted one, so
+   it's left out entirely for now rather than done half-heartedly. */
+:root {
+  --background: #eff1ed;
+  --foreground: #1b2a4a;
+}
+
+html {
+  background-color: #eff1ed;
+}
+
+body {
+  color: #1b2a4a;
+  font-family: var(--font-plex-sans-thai), Arial, Helvetica, sans-serif;
+}
+
+/* Visible keyboard focus everywhere — frontend-design skill: "visible
+   focus" is part of the quality floor, not optional polish. */
+:focus-visible {
+  outline: 2px solid #b8863b;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
