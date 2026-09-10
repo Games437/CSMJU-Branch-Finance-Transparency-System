@@ -149,6 +149,49 @@ export class EvidenceService {
     };
   }
 
+  /**
+   * Added to support the frontend's expense list needing to show
+   * "does this expense already have a bill attached" without the
+   * caller needing to already know an evidenceId — the original API
+   * design only had upload + single-evidence download, which turned
+   * out to be a real gap once building the Treasurer expense UI:
+   * approve() requires evidence to exist (Business Rule 4.2), so the
+   * UI needs to show that status before the treasurer ever tries to
+   * submit for approval.
+   */
+  async listForTransaction(user: AuthenticatedUser, transactionId: string) {
+    const transaction = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
+    if (!transaction) {
+      throw new NotFoundException('Transaction not found.');
+    }
+
+    // Same access rules as download(): TREASURER scoped, STUDENT/
+    // BRANCH_HEAD unscoped (Section 31 #12 resolved full bill access
+    // for students, so metadata visibility follows the same rule).
+    if (user.role === Role.TREASURER) {
+      await this.yearScope.assertCanAccessYear(user, transaction.yearAccountId);
+    }
+
+    const evidence = await this.prisma.expenseEvidence.findMany({
+      where: { transactionId },
+      orderBy: { version: 'desc' },
+      select: {
+        id: true,
+        originalFilename: true,
+        mimeType: true,
+        sizeBytes: true,
+        version: true,
+        isCurrent: true,
+        uploadedAt: true,
+      },
+      // storageKey deliberately not selected — same reasoning as
+      // upload()'s return value: never hand a raw storage path to the
+      // client.
+    });
+
+    return evidence;
+  }
+
   async download(user: AuthenticatedUser, evidenceId: string) {
     const evidence = await this.prisma.expenseEvidence.findUnique({
       where: { id: evidenceId },

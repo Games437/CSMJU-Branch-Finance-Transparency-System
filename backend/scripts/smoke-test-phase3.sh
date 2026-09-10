@@ -85,6 +85,11 @@ check "evidence upload succeeds" "201" "$UPLOAD_STATUS"
 echo "  evidenceId: $EVIDENCE_ID"
 
 echo ""
+echo "== Test 4b: GET evidence list for the transaction shows the uploaded file =="
+EVIDENCE_LIST_COUNT=$(curl -s -H "x-external-user-id: t2" "$BASE/expenses/$TXN_ID/evidence" | jq -r 'length')
+check "evidence list shows 1 file" "1" "$EVIDENCE_LIST_COUNT"
+
+echo ""
 echo "== Test 5: approve now succeeds — expect 201 =="
 APPROVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   -H "x-external-user-id: bh1" "$BASE/transactions/$TXN_ID/approve")

@@ -3,6 +3,7 @@ import { Noto_Serif_Thai, IBM_Plex_Sans_Thai, IBM_Plex_Mono } from "next/font/go
 import "./globals.css";
 import { DevAuthProvider } from "@/lib/dev-auth";
 import { DevRoleSwitcher } from "@/components/DevRoleSwitcher";
+import { NavBar } from "@/components/NavBar";
 
 // Three-font system for the "passbook" concept:
 // - display (Noto Serif Thai): headings, balance figures — evokes the
@@ -43,6 +44,7 @@ export default function RootLayout({
       >
         <DevAuthProvider>
           <DevRoleSwitcher />
+          <NavBar />
           {children}
         </DevAuthProvider>
       </body>

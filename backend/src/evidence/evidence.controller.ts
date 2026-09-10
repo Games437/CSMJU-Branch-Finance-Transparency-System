@@ -38,6 +38,12 @@ export class EvidenceController {
     return this.evidenceService.upload(user, transactionId, file);
   }
 
+  @Get('expenses/:transactionId/evidence')
+  @Roles(Role.STUDENT, Role.TREASURER, Role.BRANCH_HEAD)
+  listForTransaction(@CurrentUser() user: AuthenticatedUser, @Param('transactionId') transactionId: string) {
+    return this.evidenceService.listForTransaction(user, transactionId);
+  }
+
   @Get('evidence/:evidenceId')
   // RESOLVED (Section 31 #12 — confirmed by CSMJU): students can view
   // uploaded bills, for full transparency. STUDENT added here and
