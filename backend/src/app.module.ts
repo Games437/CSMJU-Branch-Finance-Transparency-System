@@ -9,6 +9,7 @@ import { YearAccountsModule } from './year-accounts/year-accounts.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { EvidenceModule } from './evidence/evidence.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { EvidenceModule } from './evidence/evidence.module';
     TransactionsModule,
     ApprovalsModule,
     EvidenceModule,
+    HealthModule,
   ],
 })
 export class AppModule {}
