@@ -12,7 +12,7 @@ import { VoidTransactionDto } from './dto/void-transaction.dto';
 // No @YearScopeParam() anywhere in this controller: every action here is
 // @Roles(Role.BRANCH_HEAD) only, and Branch Head is branch-wide by design
 // (Role Matrix Section 2) — there is no year to scope against.
-@Controller('api/v1')
+@Controller()
 @UseGuards(AuthGuard, RbacGuard)
 export class ApprovalsController {
   constructor(private readonly approvalsService: ApprovalsService) {}

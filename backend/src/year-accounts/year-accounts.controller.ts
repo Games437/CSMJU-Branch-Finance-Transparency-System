@@ -14,7 +14,7 @@ import { AdvanceAcademicYearDto } from './dto/advance-academic-year.dto';
 // mutate it. Year-scope enforcement belongs on the mutating endpoints in
 // the transactions/approvals modules (advance-year below is branch-wide
 // by nature, not scoped to any single year).
-@Controller('api/v1/year-accounts')
+@Controller('year-accounts')
 @UseGuards(AuthGuard, RbacGuard)
 export class YearAccountsController {
   constructor(private readonly yearAccountsService: YearAccountsService) {}

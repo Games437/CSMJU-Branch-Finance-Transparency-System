@@ -8,7 +8,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { UsersService } from './users.service';
 import { getPermissionSet } from './permission-matrix';
 
-@Controller('api/v1/me')
+@Controller('me')
 @UseGuards(AuthGuard, RbacGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}

@@ -11,7 +11,7 @@ import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
 
-@Controller('api/v1')
+@Controller()
 @UseGuards(AuthGuard, RbacGuard)
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}

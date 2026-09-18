@@ -22,7 +22,7 @@ import { EvidenceService } from './evidence.service';
 // TransactionsController's PATCH route: the year has to be looked up
 // (from the transaction, or from the evidence row's transaction) before
 // it can be checked, so EvidenceService does that lookup + check itself.
-@Controller('api/v1')
+@Controller()
 @UseGuards(AuthGuard, RbacGuard)
 export class EvidenceController {
   constructor(private readonly evidenceService: EvidenceService) {}
