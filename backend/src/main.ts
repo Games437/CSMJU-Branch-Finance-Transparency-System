@@ -1,7 +1,8 @@
 import 'reflect-metadata';
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -16,6 +17,16 @@ async function bootstrap() {
   // prefix at all — it's infrastructure plumbing, not a versioned
   // business resource.
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+
+  // Base standards item #3 (api-conventions.md Section 3/5): wrap every
+  // successful response as { success: true, data, meta? }, at this ONE
+  // point rather than reshaping the return value in every controller
+  // method. app.get(Reflector) (not `new Reflector()`) so the
+  // interceptor's constructor-injected Reflector is the same instance
+  // Nest's DI container already manages — needed for
+  // reflector.getAllAndOverride to see @SkipEnvelope() metadata
+  // correctly.
+  app.useGlobalInterceptors(new ResponseEnvelopeInterceptor(app.get(Reflector)));
 
   // CORS: needed because the Next.js frontend runs on a different
   // origin/port (localhost:3001 in dev) than this API (localhost:3000).

@@ -25,7 +25,7 @@ check() {
 }
 
 echo "== Setup: fetch Year 2 id =="
-YEAR2_ID=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r '.[] | select(.yearLevel==2) | .id')
+YEAR2_ID=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r '.data[] | select(.yearLevel==2) | .id')
 echo "Year 2 id: $YEAR2_ID"
 if [ -z "$YEAR2_ID" ] || [ "$YEAR2_ID" = "null" ]; then
   echo "Could not find Year 2 — did you run 'npm run db:seed'?"
@@ -42,13 +42,13 @@ CREATE_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$BASE/expenses" \
   -d "{\"yearAccountId\":\"$YEAR2_ID\",\"amount\":500,\"transactionDate\":\"2026-09-01\",\"description\":\"Test expense\",\"category\":\"SUPPLIES\"}")
 CREATE_STATUS=$(echo "$CREATE_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
 CREATE_BODY=$(echo "$CREATE_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
-TXN_ID=$(echo "$CREATE_BODY" | jq -r '.id')
+TXN_ID=$(echo "$CREATE_BODY" | jq -r '.data.id')
 check "create expense succeeds" "201" "$CREATE_STATUS"
 echo "  transactionId: $TXN_ID"
 
 echo ""
 echo "== Test 1b: pendingExpenseTotal reflects the still-PENDING expense (RESOLVED Section 31 #4, Option A: display-only) =="
-PENDING_TOTAL=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.pendingExpenseTotal')
+PENDING_TOTAL=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.data.pendingExpenseTotal')
 check "pendingExpenseTotal includes the new 500 expense" "500" "$PENDING_TOTAL"
 
 echo ""
@@ -80,14 +80,26 @@ UPLOAD_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$BASE/expenses/$TXN_I
   -H "x-external-user-id: t2" -F "file=@$TMP_PNG;type=image/png")
 UPLOAD_STATUS=$(echo "$UPLOAD_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
 UPLOAD_BODY=$(echo "$UPLOAD_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
-EVIDENCE_ID=$(echo "$UPLOAD_BODY" | jq -r '.id')
+EVIDENCE_ID=$(echo "$UPLOAD_BODY" | jq -r '.data.id')
 check "evidence upload succeeds" "201" "$UPLOAD_STATUS"
 echo "  evidenceId: $EVIDENCE_ID"
 
 echo ""
 echo "== Test 4b: GET evidence list for the transaction shows the uploaded file =="
-EVIDENCE_LIST_COUNT=$(curl -s -H "x-external-user-id: t2" "$BASE/expenses/$TXN_ID/evidence" | jq -r 'length')
-check "evidence list shows 1 file" "1" "$EVIDENCE_LIST_COUNT"
+EVIDENCE_LIST_RAW=$(curl -s -H "x-external-user-id: t2" "$BASE/expenses/$TXN_ID/evidence")
+# Hardened against the exact false-positive found earlier in this
+# project: if `.data` isn't actually an array (e.g. the route 404s and
+# returns an error object instead), `type` reports that clearly instead
+# of `length` silently counting object keys and looking like a
+# plausible-but-wrong file count.
+EVIDENCE_LIST_TYPE=$(echo "$EVIDENCE_LIST_RAW" | jq -r '.data | type')
+if [ "$EVIDENCE_LIST_TYPE" != "array" ]; then
+  echo "❌ FAIL: evidence list response was not an array (got type: $EVIDENCE_LIST_TYPE) — raw response: $EVIDENCE_LIST_RAW"
+  FAIL=$((FAIL + 1))
+else
+  EVIDENCE_LIST_COUNT=$(echo "$EVIDENCE_LIST_RAW" | jq -r '.data | length')
+  check "evidence list shows 1 file" "1" "$EVIDENCE_LIST_COUNT"
+fi
 
 echo ""
 echo "== Test 5: approve now succeeds — expect 201 =="
@@ -97,7 +109,7 @@ check "approve succeeds with evidence" "201" "$APPROVE_STATUS"
 
 echo ""
 echo "== Test 6: Student can read the transaction but externalReference is masked =="
-STUDENT_EXT_REF=$(curl -s -H "x-external-user-id: s1" "$BASE/transactions/$TXN_ID" | jq -r '.externalReference')
+STUDENT_EXT_REF=$(curl -s -H "x-external-user-id: s1" "$BASE/transactions/$TXN_ID" | jq -r '.data.externalReference')
 check "externalReference masked for student" "null" "$STUDENT_EXT_REF"
 
 echo ""
@@ -117,7 +129,7 @@ echo "== Test 9: self-approval is blocked (Branch Head creates + tries to approv
 SELF_CREATE=$(curl -s -X POST "$BASE/expenses" \
   -H "x-external-user-id: bh1" -H "Content-Type: application/json" \
   -d "{\"yearAccountId\":\"$YEAR2_ID\",\"amount\":100,\"transactionDate\":\"2026-09-01\",\"description\":\"Self-approval test\"}")
-SELF_TXN_ID=$(echo "$SELF_CREATE" | jq -r '.id')
+SELF_TXN_ID=$(echo "$SELF_CREATE" | jq -r '.data.id')
 curl -s -X POST "$BASE/expenses/$SELF_TXN_ID/evidence" \
   -H "x-external-user-id: bh1" -F "file=@$TMP_PNG;type=image/png" > /dev/null
 SELF_APPROVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -140,7 +152,7 @@ check "void without reason blocked" "400" "$VOID_NO_REASON_STATUS"
 
 echo ""
 echo "== Test 12: balance reflects the approved expense =="
-BALANCE=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.balance')
+BALANCE=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.data.balance')
 echo "  Year 2 balance is now: $BALANCE"
 
 rm -f "$TMP_PNG"
@@ -170,7 +182,7 @@ CONFIRM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   -H "x-external-user-id: bh1" "$BASE/transactions/$INCOME_TXN_ID/confirm-income")
 check "confirm-income succeeds" "201" "$CONFIRM_STATUS"
 
-INCOME_STATUS_AFTER=$(curl -s -H "x-external-user-id: bh1" "$BASE/transactions/$INCOME_TXN_ID" | jq -r '.status')
+INCOME_STATUS_AFTER=$(curl -s -H "x-external-user-id: bh1" "$BASE/transactions/$INCOME_TXN_ID" | jq -r '.data.status')
 check "income status is now APPROVED" "APPROVED" "$INCOME_STATUS_AFTER"
 
 echo ""
@@ -195,12 +207,12 @@ ADVANCE_BODY=$(echo "$ADVANCE_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
 check "advance-academic-year succeeds" "201" "$ADVANCE_STATUS"
 echo "  response: $ADVANCE_BODY"
 
-PROMOTED_COUNT=$(echo "$ADVANCE_BODY" | jq -r '.promotedCount')
+PROMOTED_COUNT=$(echo "$ADVANCE_BODY" | jq -r '.data.promotedCount')
 check "exactly 1 cohort promoted (only Year 2 existed, nothing was at Year 4 to graduate)" "1" "$PROMOTED_COUNT"
 
 echo ""
 echo "== Test 16: the promoted cohort now shows yearLevel 3 (same id) =="
-NEW_LEVEL=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r --arg id "$YEAR2_ID" '.[] | select(.id==$id) | .yearLevel')
+NEW_LEVEL=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r --arg id "$YEAR2_ID" '.data[] | select(.id==$id) | .yearLevel')
 check "cohort promoted from 2 to 3" "3" "$NEW_LEVEL"
 
 echo ""
