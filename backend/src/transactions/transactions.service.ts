@@ -34,11 +34,13 @@ export class TransactionsService {
         category: dto.category,
         sourceType: 'MANUAL',
         createdBy: user.id,
+        createdByUsername: user.externalUserId,
       },
     });
 
     await this.audit.record({
       actorId: user.id,
+      actorUsername: user.externalUserId,
       action: 'EXPENSE_CREATED',
       targetType: 'Transaction',
       targetId: transaction.id,
@@ -171,6 +173,7 @@ export class TransactionsService {
 
     await this.audit.record({
       actorId: user.id,
+      actorUsername: user.externalUserId,
       action: 'EXPENSE_UPDATED',
       targetType: 'Transaction',
       targetId: updated.id,
@@ -242,6 +245,7 @@ export class TransactionsService {
       await this.audit.record(
         {
           actorId: user.id,
+          actorUsername: user.externalUserId,
           action: 'EXPENSE_CANCELLED',
           targetType: 'Transaction',
           targetId: id,

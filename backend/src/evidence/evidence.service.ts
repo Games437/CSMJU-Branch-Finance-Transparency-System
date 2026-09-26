@@ -109,6 +109,7 @@ export class EvidenceService {
           mimeType: file.mimetype,
           sizeBytes: file.size,
           uploadedBy: user.id,
+          uploadedByUsername: user.externalUserId,
           version: (previousCurrent?.version ?? 0) + 1,
           isCurrent: true,
         },
@@ -117,6 +118,7 @@ export class EvidenceService {
       await this.audit.record(
         {
           actorId: user.id,
+          actorUsername: user.externalUserId,
           action: 'UPLOAD_BILL',
           targetType: 'Transaction',
           targetId: transactionId,

@@ -25,12 +25,20 @@ check() {
 }
 
 echo "== Setup: fetch Year 2 id =="
-YEAR2_ID=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r '.data[] | select(.yearLevel==2) | .id')
+YEAR2_ID=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r '.data[] | select(.year_level==2) | .id')
 echo "Year 2 id: $YEAR2_ID"
 if [ -z "$YEAR2_ID" ] || [ "$YEAR2_ID" = "null" ]; then
   echo "Could not find Year 2 — did you run 'npm run db:seed'?"
   exit 1
 fi
+
+echo ""
+echo "== Test 0: no x-external-user-id header at all — expect 401 (base standards item #4) =="
+NOAUTH_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" "$BASE/year-accounts")
+NOAUTH_STATUS=$(echo "$NOAUTH_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+NOAUTH_BODY=$(echo "$NOAUTH_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
+check "missing auth header blocked" "401" "$NOAUTH_STATUS"
+check "missing auth error has standard code (base item #4)" "UNAUTHORIZED" "$(echo "$NOAUTH_BODY" | jq -r '.error.code')"
 
 echo ""
 echo "== Test 1: Treasurer (t2) creates an expense in their own year — expect 201 =="
@@ -47,22 +55,33 @@ check "create expense succeeds" "201" "$CREATE_STATUS"
 echo "  transactionId: $TXN_ID"
 
 echo ""
+echo "== Test 1c: response is snake_case, and created_by_username is populated (base standards item #5/#6) =="
+check "response field is snake_case (year_account_id present)" "true" "$(echo "$CREATE_BODY" | jq -r '.data | has("year_account_id")')"
+check "created_by_username matches the acting user (base item #6)" "t2" "$(echo "$CREATE_BODY" | jq -r '.data.created_by_username')"
+
+echo ""
 echo "== Test 1b: pendingExpenseTotal reflects the still-PENDING expense (RESOLVED Section 31 #4, Option A: display-only) =="
-PENDING_TOTAL=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.data.pendingExpenseTotal')
+PENDING_TOTAL=$(curl -s -H "x-external-user-id: bh1" "$BASE/year-accounts/$YEAR2_ID/summary" | jq -r '.data.pending_expense_total')
 check "pendingExpenseTotal includes the new 500 expense" "500" "$PENDING_TOTAL"
 
 echo ""
 echo "== Test 2: same treasurer tries a fake/other year id — expect 403 =="
-OTHER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/expenses" \
+OTHER_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST "$BASE/expenses" \
   -H "x-external-user-id: t2" -H "Content-Type: application/json" \
   -d "{\"yearAccountId\":\"00000000-0000-0000-0000-000000000000\",\"amount\":500,\"transactionDate\":\"2026-09-01\",\"description\":\"Should fail\",\"category\":\"SUPPLIES\"}")
+OTHER_STATUS=$(echo "$OTHER_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+OTHER_BODY=$(echo "$OTHER_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
 check "IDOR attempt blocked" "403" "$OTHER_STATUS"
+check "IDOR error has standard code (base item #4)" "FORBIDDEN" "$(echo "$OTHER_BODY" | jq -r '.error.code')"
 
 echo ""
 echo "== Test 3: Branch Head tries to approve with NO evidence yet — expect 409 =="
-APPROVE_NO_EVIDENCE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+APPROVE_NO_EVIDENCE_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST \
   -H "x-external-user-id: bh1" "$BASE/transactions/$TXN_ID/approve")
+APPROVE_NO_EVIDENCE_STATUS=$(echo "$APPROVE_NO_EVIDENCE_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+APPROVE_NO_EVIDENCE_BODY=$(echo "$APPROVE_NO_EVIDENCE_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
 check "approve blocked without evidence" "409" "$APPROVE_NO_EVIDENCE_STATUS"
+check "no-evidence error has standard code (base item #4)" "CONFLICT" "$(echo "$APPROVE_NO_EVIDENCE_BODY" | jq -r '.error.code')"
 
 echo ""
 echo "== Test 4: upload evidence (a minimal generated PNG) =="
@@ -109,7 +128,7 @@ check "approve succeeds with evidence" "201" "$APPROVE_STATUS"
 
 echo ""
 echo "== Test 6: Student can read the transaction but externalReference is masked =="
-STUDENT_EXT_REF=$(curl -s -H "x-external-user-id: s1" "$BASE/transactions/$TXN_ID" | jq -r '.data.externalReference')
+STUDENT_EXT_REF=$(curl -s -H "x-external-user-id: s1" "$BASE/transactions/$TXN_ID" | jq -r '.data.external_reference')
 check "externalReference masked for student" "null" "$STUDENT_EXT_REF"
 
 echo ""
@@ -137,18 +156,33 @@ SELF_APPROVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
 check "self-approval blocked" "403" "$SELF_APPROVE_STATUS"
 
 echo ""
-echo "== Test 10: reject without a reason — expect 400 =="
-REJECT_NO_REASON_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  -H "x-external-user-id: bh1" -H "Content-Type: application/json" \
-  -d '{}' "$BASE/transactions/$SELF_TXN_ID/reject")
-check "reject without reason blocked" "400" "$REJECT_NO_REASON_STATUS"
+echo "== Test 9b: fetch a transaction id that doesn't exist — expect 404 (base standards item #4) =="
+NOTFOUND_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -H "x-external-user-id: bh1" \
+  "$BASE/transactions/00000000-0000-0000-0000-000000000000")
+NOTFOUND_STATUS=$(echo "$NOTFOUND_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+NOTFOUND_BODY=$(echo "$NOTFOUND_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
+check "nonexistent transaction is 404" "404" "$NOTFOUND_STATUS"
+check "not-found error has standard code (base item #4)" "NOT_FOUND" "$(echo "$NOTFOUND_BODY" | jq -r '.error.code')"
 
 echo ""
-echo "== Test 11: void without a reason — expect 400 =="
-VOID_NO_REASON_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+echo "== Test 10: reject without a reason — expect 422 VALIDATION_ERROR (base standards item #4; was 400 before the central error handler shipped) =="
+REJECT_NO_REASON_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST \
+  -H "x-external-user-id: bh1" -H "Content-Type: application/json" \
+  -d '{}' "$BASE/transactions/$SELF_TXN_ID/reject")
+REJECT_NO_REASON_STATUS=$(echo "$REJECT_NO_REASON_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+REJECT_NO_REASON_BODY=$(echo "$REJECT_NO_REASON_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
+check "reject without reason blocked" "422" "$REJECT_NO_REASON_STATUS"
+check "reject validation error has standard code (base item #4)" "VALIDATION_ERROR" "$(echo "$REJECT_NO_REASON_BODY" | jq -r '.error.code')"
+
+echo ""
+echo "== Test 11: void without a reason — expect 422 VALIDATION_ERROR (base standards item #4; was 400 before the central error handler shipped) =="
+VOID_NO_REASON_RAW=$(curl -s -w "HTTPSTATUS:%{http_code}" -X POST \
   -H "x-external-user-id: bh1" -H "Content-Type: application/json" \
   -d '{}' "$BASE/transactions/$TXN_ID/void")
-check "void without reason blocked" "400" "$VOID_NO_REASON_STATUS"
+VOID_NO_REASON_STATUS=$(echo "$VOID_NO_REASON_RAW" | grep -o 'HTTPSTATUS:[0-9]*' | cut -d: -f2)
+VOID_NO_REASON_BODY=$(echo "$VOID_NO_REASON_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
+check "void without reason blocked" "422" "$VOID_NO_REASON_STATUS"
+check "void validation error has standard code (base item #4)" "VALIDATION_ERROR" "$(echo "$VOID_NO_REASON_BODY" | jq -r '.error.code')"
 
 echo ""
 echo "== Test 12: balance reflects the approved expense =="
@@ -207,12 +241,12 @@ ADVANCE_BODY=$(echo "$ADVANCE_RAW" | sed 's/HTTPSTATUS\:[0-9]*$//')
 check "advance-academic-year succeeds" "201" "$ADVANCE_STATUS"
 echo "  response: $ADVANCE_BODY"
 
-PROMOTED_COUNT=$(echo "$ADVANCE_BODY" | jq -r '.data.promotedCount')
+PROMOTED_COUNT=$(echo "$ADVANCE_BODY" | jq -r '.data.promoted_count')
 check "exactly 1 cohort promoted (only Year 2 existed, nothing was at Year 4 to graduate)" "1" "$PROMOTED_COUNT"
 
 echo ""
 echo "== Test 16: the promoted cohort now shows yearLevel 3 (same id) =="
-NEW_LEVEL=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r --arg id "$YEAR2_ID" '.data[] | select(.id==$id) | .yearLevel')
+NEW_LEVEL=$(curl -s -H "x-external-user-id: s1" "$BASE/year-accounts" | jq -r --arg id "$YEAR2_ID" '.data[] | select(.id==$id) | .year_level')
 check "cohort promoted from 2 to 3" "3" "$NEW_LEVEL"
 
 echo ""

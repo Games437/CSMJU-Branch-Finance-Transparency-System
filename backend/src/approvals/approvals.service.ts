@@ -182,7 +182,9 @@ export class ApprovalsService {
         where: { id: transactionId },
         data: {
           status: toStatus,
-          ...(setApprovedFields ? { approvedBy: user.id, approvedAt: new Date() } : {}),
+          ...(setApprovedFields
+            ? { approvedBy: user.id, approvedByUsername: user.externalUserId, approvedAt: new Date() }
+            : {}),
         },
       });
 
@@ -190,6 +192,7 @@ export class ApprovalsService {
         data: {
           transactionId,
           actorId: user.id,
+          actorUsername: user.externalUserId,
           decision,
           reason,
         },
@@ -198,6 +201,7 @@ export class ApprovalsService {
       await this.audit.record(
         {
           actorId: user.id,
+          actorUsername: user.externalUserId,
           action: auditAction,
           targetType: 'Transaction',
           targetId: transactionId,

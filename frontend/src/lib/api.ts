@@ -41,7 +41,17 @@ export async function apiFetch<T>(
     let message = `Request failed with status ${response.status}`;
     try {
       const body = await response.json();
-      message = body?.message ?? message;
+      // FIX (found while adding base standards item #5 below): since the
+      // backend's HttpExceptionFilter (base standards item #4) shipped,
+      // every error body is { success: false, error: { code, message,
+      // details? } } — the message moved off the top level into
+      // `error.message`. This line still read `body?.message`, which is
+      // now always undefined, so every error surfaced here fell back to
+      // the generic "Request failed with status NNN" instead of the
+      // backend's actual (Thai, specific) message. `body?.message` is
+      // kept as a fallback only in case some response is ever missed by
+      // the global filter.
+      message = body?.error?.message ?? body?.message ?? message;
     } catch {
       // response body wasn't JSON — keep the generic message
     }
@@ -73,6 +83,46 @@ export async function apiFetch<T>(
  * this file's list responses are typed as, from the wire's {data, meta}
  * shape, and otherwise just returns `data`.
  */
+/**
+ * Base standards item #5 (backend's response-envelope.interceptor.ts):
+ * the backend now sends every field as snake_case, with the user-identity
+ * field specifically renamed to `username` (data-dictionary.md Section 1
+ * requires that exact name; mechanical snake_casing alone would have
+ * produced `external_user_id`). This is the frontend's mirror-image
+ * reverse transform, applied at the same one point unwrapEnvelope()
+ * already occupies, so every existing component/page here keeps reading
+ * `.yearAccountId`, `.createdAt`, `.externalUserId`, etc. exactly as
+ * before — nothing below this file needed to change for the wire format
+ * to become spec-compliant.
+ */
+const WIRE_KEY_OVERRIDES: Record<string, string> = {
+  username: "externalUserId",
+};
+
+function fromWireKey(key: string): string {
+  if (WIRE_KEY_OVERRIDES[key]) {
+    return WIRE_KEY_OVERRIDES[key];
+  }
+  return key.replace(/_([a-z0-9])/g, (_match, ch: string) => ch.toUpperCase());
+}
+
+function fromWireFormat(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => fromWireFormat(item));
+  }
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      result[fromWireKey(key)] = fromWireFormat(val);
+    }
+    return result;
+  }
+  return value;
+}
+
 function unwrapEnvelope(parsed: unknown): unknown {
   if (
     typeof parsed !== "object" ||
@@ -89,14 +139,14 @@ function unwrapEnvelope(parsed: unknown): unknown {
 
   if (envelope.meta) {
     return {
-      items: envelope.data,
+      items: fromWireFormat(envelope.data),
       page: envelope.meta.page,
       pageSize: envelope.meta.per_page,
       total: envelope.meta.total,
     };
   }
 
-  return envelope.data;
+  return fromWireFormat(envelope.data);
 }
 
 // ----------------------------------------------------------------------

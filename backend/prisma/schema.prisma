@@ -146,6 +146,17 @@ model UserYearAssignment {
   activeFrom    DateTime @default(now()) @map("active_from")
   activeTo      DateTime? @map("active_to") // null = currently active
 
+  // Base standards item #6 (00_STANDARDS_COMPLIANCE.md §3 row 6 /
+  // 04_ERD_DATABASE_SCHEMA.md §2): every table linked to a user carries a
+  // denormalized username alongside its UUID FK. ADDITIVE, not a
+  // replacement — confirmed with the user as the low-risk path instead of
+  // the doc's other, "highest risk" option (drop users.id/display_name,
+  // convert every FK to a username-only key). userId stays the FK of
+  // record; username is a read-side convenience populated at write time
+  // from the acting user's externalUserId (see service call sites), never
+  // used for joins or lookups.
+  username      String  @map("username")
+
   user        User        @relation(fields: [userId], references: [id])
   yearAccount YearAccount @relation(fields: [yearAccountId], references: [id])
 
@@ -298,6 +309,13 @@ model Transaction {
   approvedBy String?   @map("approved_by") @db.Uuid
   approvedAt DateTime? @map("approved_at")
 
+  // Base standards item #6 — see UserYearAssignment.username comment
+  // above for the full rationale. Nullability mirrors the FK each
+  // shadows: createdByUsername is required (createdBy always is),
+  // approvedByUsername is optional (approvedBy is null until approved).
+  createdByUsername  String  @map("created_by_username")
+  approvedByUsername String? @map("approved_by_username")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
@@ -333,6 +351,9 @@ model ExpenseEvidence {
   uploadedBy String   @map("uploaded_by") @db.Uuid
   uploadedAt DateTime @default(now()) @map("uploaded_at")
 
+  // Base standards item #6 — see UserYearAssignment.username comment above.
+  uploadedByUsername String @map("uploaded_by_username")
+
   // Business Rule #6: replacing a bill must not erase history — every
   // upload is a new immutable row; `version` increments and `isCurrent`
   // marks which one is authoritative for display. Enforced by service
@@ -357,6 +378,9 @@ model ApprovalAction {
   actorId       String           @map("actor_id") @db.Uuid
   decision      ApprovalDecision
   reason        String? // required by the service layer when decision = REJECT
+
+  // Base standards item #6 — see UserYearAssignment.username comment above.
+  actorUsername String @map("actor_username")
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -419,6 +443,11 @@ model AuditLog {
   targetType    String   @map("target_type")
   targetId      String   @map("target_id") @db.Uuid
   yearAccountId String?  @map("year_account_id") @db.Uuid
+
+  // Base standards item #6 — see UserYearAssignment.username comment
+  // above. Nullable to mirror actorId (nullable for system-originated
+  // events).
+  actorUsername String? @map("actor_username")
 
   beforeJson   Json? @map("before_json")
   afterJson    Json? @map("after_json")

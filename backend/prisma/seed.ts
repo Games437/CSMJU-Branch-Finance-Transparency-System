@@ -48,7 +48,7 @@ async function main() {
   });
 
   await prisma.userYearAssignment.create({
-    data: { userId: treasurerA.id, yearAccountId: year2.id, role: "TREASURER" },
+    data: { userId: treasurerA.id, username: treasurerA.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
   });
 
   console.log("✅ Seeded base year account + 4 users + 1 active treasurer assignment");
@@ -65,6 +65,7 @@ async function main() {
         description: "negative amount attempt",
         sourceType: "MANUAL",
         createdBy: treasurerA.id,
+        createdByUsername: treasurerA.externalUserId,
       },
     });
     console.error("❌ FAIL: negative amount was accepted — CHECK constraint missing/broken");
@@ -75,7 +76,7 @@ async function main() {
   // --- Scenario 2: a second ACTIVE treasurer on the same year must be rejected ---
   try {
     await prisma.userYearAssignment.create({
-      data: { userId: treasurerB.id, yearAccountId: year2.id, role: "TREASURER" },
+      data: { userId: treasurerB.id, username: treasurerB.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
     });
     console.error("❌ FAIL: two active treasurers on the same year were both accepted");
   } catch {
@@ -88,7 +89,7 @@ async function main() {
     data: { activeTo: new Date() },
   });
   await prisma.userYearAssignment.create({
-    data: { userId: treasurerB.id, yearAccountId: year2.id, role: "TREASURER" },
+    data: { userId: treasurerB.id, username: treasurerB.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
   });
   console.log("✅ PASS: treasurer handover (close old + open new) succeeded");
 
@@ -116,6 +117,7 @@ async function main() {
       description: "Bank notification",
       sourceType: "BANK_IMPORT",
       createdBy: treasurerB.id,
+      createdByUsername: treasurerB.externalUserId,
       idempotencyKey: "dedupe-key-abc",
       status: "NEEDS_REVIEW",
     },
@@ -130,6 +132,7 @@ async function main() {
         description: "Bank notification (retry delivery)",
         sourceType: "BANK_IMPORT",
         createdBy: treasurerB.id,
+        createdByUsername: treasurerB.externalUserId,
         idempotencyKey: "dedupe-key-abc",
         status: "NEEDS_REVIEW",
       },
@@ -144,10 +147,20 @@ async function main() {
   // it replicates the same three writes that method makes atomically).
   await prisma.transaction.updateMany({
     where: { id: income.id },
-    data: { status: "APPROVED", approvedBy: branchHead.id, approvedAt: new Date() },
+    data: {
+      status: "APPROVED",
+      approvedBy: branchHead.id,
+      approvedByUsername: branchHead.externalUserId,
+      approvedAt: new Date(),
+    },
   });
   await prisma.approvalAction.create({
-    data: { transactionId: income.id, actorId: branchHead.id, decision: "APPROVE" },
+    data: {
+      transactionId: income.id,
+      actorId: branchHead.id,
+      actorUsername: branchHead.externalUserId,
+      decision: "APPROVE",
+    },
   });
   console.log("✅ PASS: income confirmed by Branch Head (NEEDS_REVIEW -> APPROVED)");
 
@@ -161,6 +174,7 @@ async function main() {
       description: "test expense",
       sourceType: "MANUAL",
       createdBy: treasurerB.id,
+      createdByUsername: treasurerB.externalUserId,
       status: "APPROVED",
     },
   });
@@ -168,6 +182,7 @@ async function main() {
     data: {
       transactionId: expense.id,
       actorId: branchHead.id,
+      actorUsername: branchHead.externalUserId,
       decision: "VOID",
       reason: "Duplicate entry, voided by branch head",
     },

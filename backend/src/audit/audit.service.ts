@@ -5,6 +5,13 @@ import { ListAuditLogsQueryDto } from './dto/list-audit-logs-query.dto';
 
 export interface AuditEntry {
   actorId: string | null;
+  // Base standards item #6 — see schema.prisma's UserYearAssignment.username
+  // comment for the full rationale. Every call site passes the acting
+  // user's externalUserId directly (it's already in hand as
+  // AuthenticatedUser.externalUserId); null only for a genuinely
+  // system-originated event with no human actor, matching actorId's own
+  // nullability.
+  actorUsername: string | null;
   action: string;
   targetType: string;
   targetId: string;
@@ -42,6 +49,7 @@ export class AuditService {
     await client.auditLog.create({
       data: {
         actorId: entry.actorId,
+        actorUsername: entry.actorUsername,
         action: entry.action,
         targetType: entry.targetType,
         targetId: entry.targetId,

@@ -3,6 +3,7 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -27,6 +28,14 @@ async function bootstrap() {
   // reflector.getAllAndOverride to see @SkipEnvelope() metadata
   // correctly.
   app.useGlobalInterceptors(new ResponseEnvelopeInterceptor(app.get(Reflector)));
+
+  // Base standards item #4 (api-conventions.md Section 4): wrap every
+  // ERROR response as { success: false, error: { code, message,
+  // details? } } with error.code restricted to the standard 6-value
+  // list, at this ONE point rather than shaping errors ad hoc wherever
+  // they're thrown. Mirrors the interceptor above, which does the same
+  // for success responses (base item #3).
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   // CORS: needed because the Next.js frontend runs on a different
   // origin/port (localhost:3001 in dev) than this API (localhost:3000).

@@ -182,6 +182,7 @@ export class YearAccountsService {
       await this.audit.record(
         {
           actorId: user.id,
+          actorUsername: user.externalUserId,
           action: 'ADVANCE_ACADEMIC_YEAR',
           targetType: 'AcademicYear',
           targetId: newCohort.id, // no better single target — this is a branch-wide event
