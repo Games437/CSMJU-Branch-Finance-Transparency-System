@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
+import { CancelExpenseDto } from './dto/cancel-expense.dto';
 import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
 
 @Injectable()
@@ -181,6 +182,78 @@ export class TransactionsService {
         description: updated.description,
         category: updated.category,
       },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Lets the creator of a still-PENDING expense withdraw it before Branch
+   * Head review — added on explicit request (confirmed with the user
+   * rather than guessed, since nothing in the spec docs named this
+   * action). Per 01_BUSINESS_RULES_SPECIFICATION.md Section 11 ("no hard
+   * delete of financial transactions — use a void/cancel workflow with a
+   * reason instead"), this is a status transition to the new CANCELLED
+   * value, not a row deletion: the transaction, its evidence, and this
+   * action's audit entry all remain. Ownership/scope rules mirror
+   * updateExpense() exactly (same "own/scoped for Treasurer, unscoped for
+   * Branch Head" split from 02_ROLE_PERMISSION_MATRIX.md's
+   * editPendingExpense row) since withdrawing a request you haven't
+   * submitted for review yet is the same kind of self-service action as
+   * editing it.
+   */
+  async cancelExpense(user: AuthenticatedUser, id: string, dto: CancelExpenseDto) {
+    const transaction = await this.prisma.transaction.findUnique({ where: { id } });
+
+    if (!transaction) {
+      throw new NotFoundException('Transaction not found.');
+    }
+
+    if (transaction.type !== 'EXPENSE') {
+      throw new ConflictException('Only expense transactions can be cancelled through this endpoint.');
+    }
+
+    if (transaction.status !== TransactionStatus.PENDING) {
+      throw new ConflictException(
+        `Transaction is ${transaction.status}, not PENDING — it can no longer be cancelled directly.`,
+      );
+    }
+
+    if (user.role === Role.TREASURER) {
+      await this.yearScope.assertCanAccessYear(user, transaction.yearAccountId);
+      if (transaction.createdBy !== user.id) {
+        throw new ForbiddenException('You do not have permission to access this resource.');
+      }
+    }
+
+    // Atomic status update + audit entry — same pattern as every other
+    // status transition in this codebase (Security Model Section 4: a
+    // status change must never succeed without its audit record, or vice
+    // versa). No ApprovalAction row: that table represents a reviewer's
+    // decision about someone else's transaction (approve/reject/void);
+    // this is the creator withdrawing their own not-yet-reviewed request,
+    // a different kind of event, recorded in the audit log alone.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const cancelled = await tx.transaction.update({
+        where: { id },
+        data: { status: TransactionStatus.CANCELLED },
+      });
+
+      await this.audit.record(
+        {
+          actorId: user.id,
+          action: 'EXPENSE_CANCELLED',
+          targetType: 'Transaction',
+          targetId: id,
+          yearAccountId: transaction.yearAccountId,
+          beforeJson: { status: transaction.status },
+          afterJson: { status: cancelled.status },
+          metadataJson: { reason: dto.reason },
+        },
+        tx,
+      );
+
+      return cancelled;
     });
 
     return updated;

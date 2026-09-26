@@ -18,6 +18,14 @@ import { Role } from '@prisma/client';
  * until Section 31's open business rules are locked. Treat any `false`
  * marked ASSUMPTION below as "not yet authorized to build", not as a
  * final policy decision.
+ *
+ * `cancelPendingExpense` is NOT in the source matrix doc at all — it was
+ * added after a Treasurer asked for a way to withdraw their own
+ * not-yet-reviewed expense, confirmed with the user rather than guessed
+ * (see transactions.service.ts#cancelExpense's comment for the full
+ * reasoning). Mirrors `editPendingExpense` exactly: same own/scoped vs.
+ * unscoped split, since it's the same kind of pre-review self-service
+ * action on the same PENDING expense.
  */
 export interface PermissionSet {
   viewDashboard: boolean;
@@ -31,6 +39,7 @@ export interface PermissionSet {
   createExpense: boolean;
   uploadBill: boolean;
   editPendingExpense: boolean;
+  cancelPendingExpense: boolean;
   approveExpense: boolean;
   rejectExpense: boolean;
   voidTransaction: boolean;
@@ -54,6 +63,7 @@ export function getPermissionSet(role: Role): PermissionSet {
         createExpense: false,
         uploadBill: false,
         editPendingExpense: false,
+        cancelPendingExpense: false,
         approveExpense: false,
         rejectExpense: false,
         voidTransaction: false,
@@ -74,6 +84,7 @@ export function getPermissionSet(role: Role): PermissionSet {
         createExpense: true, // scoped
         uploadBill: true, // scoped
         editPendingExpense: true, // own/scoped
+        cancelPendingExpense: true, // own/scoped
         approveExpense: false,
         rejectExpense: false,
         voidTransaction: false,
@@ -94,6 +105,7 @@ export function getPermissionSet(role: Role): PermissionSet {
         createExpense: true, // "✓/override if needed" — base capability granted; the "override" nuance is not modeled yet
         uploadBill: true,
         editPendingExpense: true,
+        cancelPendingExpense: true, // unscoped, same as editPendingExpense
         approveExpense: true,
         rejectExpense: true,
         voidTransaction: true, // "with reason" — enforced by requiring `reason` in the void DTO, not here

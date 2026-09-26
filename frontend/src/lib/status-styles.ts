@@ -16,6 +16,7 @@ export function statusBadgeClasses(status: TransactionStatus): string {
       return "bg-brassSoft text-brass";
     case "REJECTED":
     case "VOIDED":
+    case "CANCELLED":
       return "bg-rustSoft text-rust";
   }
 }
@@ -29,8 +30,12 @@ export function statusLabelTh(status: TransactionStatus): string {
     case "REJECTED":
       return "ถูกปฏิเสธ";
     case "VOIDED":
-      return "ถูกยกเลิก";
+      return "ถูกยกเลิก (โดยหัวหน้าสาขา)";
     case "NEEDS_REVIEW":
       return "รอตรวจสอบ";
+    case "CANCELLED":
+      // Distinct from VOIDED: this is the creator withdrawing their own
+      // still-PENDING request, not a Branch Head reversing an APPROVED one.
+      return "ยกเลิกโดยผู้สร้างรายการ";
   }
 }

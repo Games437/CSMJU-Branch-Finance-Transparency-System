@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  cancelExpense,
   fetchEvidenceObjectUrl,
   listEvidenceForTransaction,
   updateExpense,
@@ -54,6 +55,13 @@ export function ExpenseRow({ transaction, externalUserId, currentUserId, onUpdat
           />
           {canEdit && (
             <EditForm
+              transaction={transaction}
+              externalUserId={externalUserId}
+              onUpdated={onUpdated}
+            />
+          )}
+          {canEdit && (
+            <CancelSection
               transaction={transaction}
               externalUserId={externalUserId}
               onUpdated={onUpdated}
@@ -266,6 +274,93 @@ function EditForm({
       >
         {saving ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
       </button>
+    </form>
+  );
+}
+
+/**
+ * Lets the person who created this still-PENDING expense withdraw it
+ * before Branch Head review — separate from EditForm above (editing
+ * changes the request, cancelling withdraws it entirely). Requires a
+ * reason, same pattern as ApprovalRow.tsx's reject/void forms. The
+ * transaction is never deleted: it transitions to CANCELLED and stays
+ * visible in the list with that status (no hard delete of financial
+ * records — see backend's transactions.service.ts#cancelExpense).
+ */
+function CancelSection({
+  transaction,
+  externalUserId,
+  onUpdated,
+}: {
+  transaction: Transaction;
+  externalUserId: string;
+  onUpdated: (updated: Transaction) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [reason, setReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = reason.trim();
+    if (!trimmed) return;
+    setCancelling(true);
+    setError(null);
+    try {
+      const updated = await cancelExpense(externalUserId, transaction.id, trimmed);
+      onUpdated(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "ยกเลิกรายการไม่สำเร็จ");
+      setCancelling(false);
+    }
+  };
+
+  if (!showForm) {
+    return (
+      <div className="mt-3 border-t border-paperLine pt-3">
+        <button
+          onClick={() => setShowForm(true)}
+          className="rounded-full border border-rust px-3 py-1 text-xs text-rust hover:bg-rustSoft"
+        >
+          ยกเลิกรายการ
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 border-t border-paperLine pt-3">
+      <h4 className="mb-2 text-sm font-semibold text-ink">ยกเลิกรายการนี้</h4>
+      {error && <p className="mb-2 text-sm text-rust">{error}</p>}
+      <label className="mb-2 block text-sm text-inkFaint">
+        เหตุผลที่ยกเลิก (จำเป็นต้องระบุ)
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          required
+          maxLength={500}
+          rows={2}
+          className="mt-1 w-full rounded border border-paperLine px-2 py-1 text-ink"
+        />
+      </label>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={cancelling || !reason.trim()}
+          className="rounded-full bg-rust px-4 py-1.5 text-sm text-white disabled:opacity-50"
+        >
+          {cancelling ? "กำลังยกเลิก..." : "ยืนยันการยกเลิก"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowForm(false)}
+          disabled={cancelling}
+          className="rounded-full border border-paperLine px-4 py-1.5 text-sm text-inkFaint disabled:opacity-50"
+        >
+          ปิด
+        </button>
+      </div>
     </form>
   );
 }

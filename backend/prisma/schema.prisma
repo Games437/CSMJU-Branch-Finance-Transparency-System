@@ -45,13 +45,30 @@ enum TransactionType {
 // ("ข้อมูลแจ้งเตือนไม่ครบ → เข้าสถานะ NEEDS_REVIEW/MANUAL_REVIEW") for
 // income transactions created from an ambiguous/incomplete bank event.
 // It must never apply to EXPENSE (expenses only ever go
-// PENDING -> APPROVED/REJECTED -> optionally VOIDED).
+// PENDING -> APPROVED/REJECTED -> optionally VOIDED, or now also
+// PENDING -> CANCELLED, see below).
+//
+// ASSUMPTION (confirmed with the user — a Treasurer asked for a way to
+// withdraw their own not-yet-reviewed expense, which was previously
+// impossible; there was nothing in the spec docs to guess from, so this
+// was raised explicitly rather than invented silently): CANCELLED is a
+// new terminal status for a still-PENDING EXPENSE the creator withdraws
+// before Branch Head review. Per 01_BUSINESS_RULES_SPECIFICATION.md
+// Section 11 ("ห้าม hard delete รายการทางการเงิน ใช้ void/cancel workflow
+// พร้อมเหตุผลแทน") this is a status transition with a mandatory reason and
+// a full audit trail — never a row deletion. Distinct from VOIDED
+// (Branch-Head-only, reverses an already-APPROVED transaction per
+// Section 31 #7) — CANCELLED only ever follows PENDING, and only the
+// transaction's own creator (or Branch Head, unscoped, same as
+// editPendingExpense) can trigger it. See
+// transactions.service.ts#cancelExpense.
 enum TransactionStatus {
   PENDING
   APPROVED
   REJECTED
   VOIDED
   NEEDS_REVIEW
+  CANCELLED
 }
 
 enum TransactionSourceType {

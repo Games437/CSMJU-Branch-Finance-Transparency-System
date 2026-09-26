@@ -9,6 +9,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { TransactionsService } from './transactions.service';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
+import { CancelExpenseDto } from './dto/cancel-expense.dto';
 import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
 
 @Controller()
@@ -47,5 +48,17 @@ export class TransactionsController {
     // looks the transaction up first and does the equivalent check
     // itself. See its comments.
     return this.transactionsService.updateExpense(user, transactionId, dto);
+  }
+
+  @Post('expenses/:transactionId/cancel')
+  @Roles(Role.TREASURER, Role.BRANCH_HEAD)
+  cancelExpense(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('transactionId') transactionId: string,
+    @Body() dto: CancelExpenseDto,
+  ) {
+    // Same reasoning as updateExpense above: no @YearScopeParam(), the
+    // service looks the transaction up and checks ownership/scope itself.
+    return this.transactionsService.cancelExpense(user, transactionId, dto);
   }
 }
