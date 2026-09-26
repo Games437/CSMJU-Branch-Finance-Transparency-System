@@ -50,7 +50,53 @@ export async function apiFetch<T>(
 
   // 204 No Content or empty body
   const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  if (!text) return undefined as T;
+
+  const parsed: unknown = JSON.parse(text);
+  return unwrapEnvelope(parsed) as T;
+}
+
+/**
+ * BUGFIX: every endpoint response is wrapped by the backend's
+ * ResponseEnvelopeInterceptor (base standards item #3) as
+ * { success, data } or, for paginated list endpoints, as
+ * { success, data, meta: { page, per_page, total } } — see
+ * backend's src/common/interceptors/response-envelope.interceptor.ts.
+ * apiFetch previously returned that raw envelope as-is instead of the
+ * unwrapped payload the rest of this file's types (YearAccountListItem[],
+ * MeResponse, TransactionListResponse, ...) actually describe, so every
+ * caller — including the original dashboard/expenses pages, not just the
+ * newer Approvals/Year Account Detail/Audit Log pages — got the envelope
+ * object where it expected the real value (e.g. `yearAccounts.map` failing
+ * because `yearAccounts` was `{success, data}`, not the array itself).
+ * This reconstructs the pagination shape ({items, page, pageSize, total})
+ * this file's list responses are typed as, from the wire's {data, meta}
+ * shape, and otherwise just returns `data`.
+ */
+function unwrapEnvelope(parsed: unknown): unknown {
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("success" in parsed) ||
+    !("data" in parsed)
+  ) {
+    // Not an envelope-shaped body (shouldn't happen for any endpoint this
+    // file calls) — return as-is rather than guessing further.
+    return parsed;
+  }
+
+  const envelope = parsed as { success: boolean; data: unknown; meta?: { page: number; per_page: number; total: number } };
+
+  if (envelope.meta) {
+    return {
+      items: envelope.data,
+      page: envelope.meta.page,
+      pageSize: envelope.meta.per_page,
+      total: envelope.meta.total,
+    };
+  }
+
+  return envelope.data;
 }
 
 // ----------------------------------------------------------------------
@@ -93,7 +139,7 @@ export interface PendingApprovalItem {
 }
 
 export type TransactionType = "INCOME" | "EXPENSE" | "ADJUSTMENT";
-export type TransactionStatus = "PENDING" | "APPROVED" | "REJECTED" | "VOIDED" | "NEEDS_REVIEW";
+export type TransactionStatus = "PENDING" | "APPROVED" | "REJECTED" | "VOIDED" | "NEEDS_REVIEW" | "CANCELLED";
 
 export interface Transaction {
   id: string;
@@ -194,6 +240,22 @@ export function updateExpense(externalUserId: string | null, transactionId: stri
   });
 }
 
+/**
+ * Lets the Treasurer (or Branch Head) who created a still-PENDING expense
+ * withdraw it before review — added on explicit request, since there was
+ * no way to do this before (only edit existed). Transitions to the new
+ * CANCELLED status; the transaction and its evidence are never deleted
+ * (backend's transactions.service.ts#cancelExpense — no hard delete of
+ * financial records, per 01_BUSINESS_RULES_SPECIFICATION.md Section 11).
+ * Requires a reason, same as reject/void.
+ */
+export function cancelExpense(externalUserId: string | null, transactionId: string, reason: string) {
+  return apiFetch<Transaction>(`/expenses/${transactionId}/cancel`, externalUserId, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function listEvidenceForTransaction(externalUserId: string | null, transactionId: string) {
   return apiFetch<EvidenceMeta[]>(`/expenses/${transactionId}/evidence`, externalUserId);
 }
@@ -236,4 +298,91 @@ export function getYearAccountSummary(externalUserId: string | null, yearAccount
 
 export function listPendingApprovals(externalUserId: string | null) {
   return apiFetch<PendingApprovalItem[]>("/approvals/pending", externalUserId);
+}
+
+export function approveTransaction(externalUserId: string | null, transactionId: string) {
+  return apiFetch<Transaction>(`/transactions/${transactionId}/approve`, externalUserId, {
+    method: "POST",
+  });
+}
+
+export function rejectTransaction(externalUserId: string | null, transactionId: string, reason: string) {
+  return apiFetch<Transaction>(`/transactions/${transactionId}/reject`, externalUserId, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function voidTransaction(externalUserId: string | null, transactionId: string, reason: string) {
+  return apiFetch<Transaction>(`/transactions/${transactionId}/void`, externalUserId, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function confirmIncome(externalUserId: string | null, transactionId: string) {
+  return apiFetch<Transaction>(`/transactions/${transactionId}/confirm-income`, externalUserId, {
+    method: "POST",
+  });
+}
+
+// ----------------------------------------------------------------------
+// Audit log (Branch Head only — see backend's permission-matrix.ts's
+// viewFullAuditLog: Student ✗, Treasurer left denied ["limited scoped" is
+// an unresolved ASSUMPTION there, not implemented), Branch Head ✓. Both
+// endpoints 403 for any other role, matching backend's audit.controller.ts.
+// ----------------------------------------------------------------------
+
+export interface AuditActor {
+  id: string;
+  externalUserId: string;
+  displayName: string;
+  role: "STUDENT" | "TREASURER" | "BRANCH_HEAD";
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actorId: string | null;
+  actor: AuditActor | null;
+  action: string;
+  targetType: string;
+  targetId: string;
+  yearAccountId: string | null;
+  yearAccount: { id: string; name: string; yearLevel: number } | null;
+  beforeJson: unknown;
+  afterJson: unknown;
+  metadataJson: unknown;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogEntry[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ListAuditLogsParams {
+  yearAccountId?: string;
+  action?: string;
+  targetType?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export function listAuditLogs(externalUserId: string | null, params: ListAuditLogsParams = {}) {
+  const search = new URLSearchParams();
+  if (params.yearAccountId) search.set("yearAccountId", params.yearAccountId);
+  if (params.action) search.set("action", params.action);
+  if (params.targetType) search.set("targetType", params.targetType);
+  if (params.page) search.set("page", String(params.page));
+  if (params.pageSize) search.set("pageSize", String(params.pageSize));
+  const qs = search.toString();
+  return apiFetch<AuditLogListResponse>(`/audit-logs${qs ? `?${qs}` : ""}`, externalUserId);
+}
+
+export function getTransactionAuditTrail(externalUserId: string | null, transactionId: string) {
+  return apiFetch<AuditLogEntry[]>(`/transactions/${transactionId}/audit`, externalUserId);
 }
