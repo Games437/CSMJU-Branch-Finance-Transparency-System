@@ -278,7 +278,13 @@ export default function YearAccountsPage() {
                   <p className="text-inkFaint">ไม่พบรายการตามเงื่อนไขที่เลือก</p>
                 ) : (
                   transactionList.items.map((t: Transaction) => (
-                    <TransactionRow key={t.id} transaction={t} externalUserId={externalUserId} />
+                    <TransactionRow
+                      key={t.id}
+                      transaction={t}
+                      externalUserId={externalUserId}
+                      currentUserId={me?.id}
+                      role={role ?? undefined}
+                    />
                   ))
                 )}
               </div>

@@ -98,45 +98,55 @@ export function ApprovalRow({ item, externalUserId, onResolved }: Props) {
         <div className="border-t border-paperLine p-4">
           {error && <p className="mb-3 text-sm text-rust">{error}</p>}
 
-          {item.type === "EXPENSE" && (
-            <EvidenceViewer transactionId={item.id} externalUserId={externalUserId} />
-          )}
+          {/* Business Rule 6 (amended 2026-09-27): evidence can exist on
+              either EXPENSE or INCOME, so the Branch Head needs to be able
+              to see what was attached before confirming an income entry
+              too (e.g. a donation transfer slip reported via LINE) — this
+              used to be gated to `item.type === "EXPENSE"`, which hid the
+              file entirely on the income-confirm path. No `canUpload` here
+              on purpose: this is someone else's transaction, the Branch
+              Head only ever reviews it (see this file's header comment). */}
+          <EvidenceViewer
+            transactionId={item.id}
+            externalUserId={externalUserId}
+            transactionType={item.type === "INCOME" ? "INCOME" : "EXPENSE"}
+          />
 
-          {item.type === "EXPENSE" && !showRejectForm && (
+          {/* AMENDED 2026-09-27 (user's explicit request, "เพิ่มปุ่มไม่อนุมัติ
+              ด้วยในส่วนรายรับ"): reject used to be EXPENSE-only here,
+              matching the backend before this same change — an income
+              report had no "this is wrong" path at all, only confirm.
+              approvals.service.ts#reject() now accepts either type, so
+              this is just removing the `item.type === "EXPENSE"` gate and
+              picking the right label/handler for the primary action
+              (confirm vs approve) while sharing one reject flow for both,
+              since listPendingApprovals() only ever surfaces these two
+              types here (this file's header comment). */}
+          {!showRejectForm && (
             <div className="flex gap-2">
               <button
-                onClick={handleApprove}
+                onClick={item.type === "INCOME" ? handleConfirmIncome : handleApprove}
                 disabled={acting}
                 className="rounded-full bg-jade px-4 py-1.5 text-sm text-white disabled:opacity-50"
               >
-                {acting ? "กำลังดำเนินการ..." : "อนุมัติ"}
+                {acting ? "กำลังดำเนินการ..." : item.type === "INCOME" ? "ยืนยันรายรับ" : "อนุมัติ"}
               </button>
               <button
                 onClick={() => setShowRejectForm(true)}
                 disabled={acting}
                 className="rounded-full border border-rust px-4 py-1.5 text-sm text-rust disabled:opacity-50"
               >
-                ปฏิเสธ
+                ไม่อนุมัติ
               </button>
             </div>
           )}
 
-          {item.type === "EXPENSE" && showRejectForm && (
+          {showRejectForm && (
             <RejectForm
               acting={acting}
               onCancel={() => setShowRejectForm(false)}
               onSubmit={handleReject}
             />
-          )}
-
-          {item.type === "INCOME" && (
-            <button
-              onClick={handleConfirmIncome}
-              disabled={acting}
-              className="rounded-full bg-jade px-4 py-1.5 text-sm text-white disabled:opacity-50"
-            >
-              {acting ? "กำลังดำเนินการ..." : "ยืนยันรายรับ"}
-            </button>
           )}
         </div>
       )}
@@ -165,7 +175,7 @@ function RejectForm({
   return (
     <form onSubmit={handleSubmit}>
       <label className="mb-2 block text-sm text-inkFaint">
-        เหตุผลที่ปฏิเสธ (จำเป็นต้องระบุ)
+        เหตุผลที่ไม่อนุมัติ (จำเป็นต้องระบุ)
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -181,7 +191,7 @@ function RejectForm({
           disabled={acting || !reason.trim()}
           className="rounded-full bg-rust px-4 py-1.5 text-sm text-white disabled:opacity-50"
         >
-          {acting ? "กำลังดำเนินการ..." : "ยืนยันการปฏิเสธ"}
+          {acting ? "กำลังดำเนินการ..." : "ยืนยันการไม่อนุมัติ"}
         </button>
         <button
           type="button"

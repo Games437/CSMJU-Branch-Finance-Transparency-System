@@ -200,7 +200,7 @@ export interface Transaction {
   transactionDate: string;
   description: string;
   category: string | null;
-  sourceType: "MANUAL" | "BANK_IMPORT" | "ADJUSTMENT";
+  sourceType: "MANUAL" | "BANK_IMPORT" | "ADJUSTMENT" | "LINE_REPORT";
   externalReference: string | null;
   createdBy: string;
   approvedBy: string | null;
@@ -435,4 +435,32 @@ export function listAuditLogs(externalUserId: string | null, params: ListAuditLo
 
 export function getTransactionAuditTrail(externalUserId: string | null, transactionId: string) {
   return apiFetch<AuditLogEntry[]>(`/transactions/${transactionId}/audit`, externalUserId);
+}
+
+// ----------------------------------------------------------------------
+// LINE OA quick-entry — account linking (TREASURER only, backend's
+// line/line-account.controller.ts). The webhook itself (LINE's platform
+// calling us) has no frontend counterpart — nothing here calls it.
+// ----------------------------------------------------------------------
+
+export interface LineLinkCodeResponse {
+  code: string;
+  expiresAt: string;
+}
+
+export interface LineLinkStatusResponse {
+  linked: boolean;
+  linkedAt: string | null;
+}
+
+export function generateLineLinkCode(externalUserId: string | null) {
+  return apiFetch<LineLinkCodeResponse>("/line/link-codes", externalUserId, { method: "POST" });
+}
+
+export function getLineLinkStatus(externalUserId: string | null) {
+  return apiFetch<LineLinkStatusResponse>("/line/link-status", externalUserId);
+}
+
+export function unlinkLine(externalUserId: string | null) {
+  return apiFetch<{ unlinked: true }>("/line/link", externalUserId, { method: "DELETE" });
 }

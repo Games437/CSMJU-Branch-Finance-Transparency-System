@@ -75,6 +75,20 @@ enum TransactionSourceType {
   MANUAL // entered directly by an authorized human (e.g. Branch Head adjustment)
   BANK_IMPORT // produced by the income integration pipeline
   ADJUSTMENT // corrective entry, see Business Rule #7 "adjustment transaction"
+
+  // ASSUMPTION (confirmed with the user — LINE OA quick-entry feature,
+  // 2026-09-26): a Treasurer forwards/types a transaction into the
+  // branch's own LINE Official Account instead of using the web form.
+  // Deliberately NOT reusing BANK_IMPORT: that value means "produced by
+  // the automated bank-feed integration pipeline" (06_INTEGRATION_
+  // SPECIFICATION.md, still blocked on unverified bank API access —
+  // see LineMessageEvent below for why this is a separate, simpler
+  // adapter rather than a forced fit into that pipeline's
+  // IntegrationSource/IntegrationEvent model). LINE_REPORT means "a
+  // human typed/forwarded this via LINE" — same trust level as MANUAL,
+  // just a different entry channel worth keeping distinguishable for
+  // audit/transparency.
+  LINE_REPORT
 }
 
 // SELF-REVIEW FIX: originally only APPROVE/REJECT. VOID is added so that
@@ -124,6 +138,8 @@ model User {
   uploadedEvidence  ExpenseEvidence[]
   approvalActions   ApprovalAction[]
   auditLogs         AuditLog[]
+  lineAccountLink   LineAccountLink?
+  lineLinkCodes     LineLinkCode[]
 
   @@map("users")
 }
@@ -325,6 +341,7 @@ model Transaction {
   evidence        ExpenseEvidence[]
   approvalActions ApprovalAction[]
   integrationEvents IntegrationEvent[]
+  lineMessageEvents LineMessageEvent[]
 
   @@index([yearAccountId, transactionDate])
   @@index([yearAccountId, status])
@@ -430,6 +447,120 @@ model IntegrationEvent {
   // ERD Section 5 ("unique within provider/source").
   @@unique([integrationSourceId, externalEventId])
   @@map("integration_events")
+}
+
+// ----------------------------------------------------------------------------
+// LINE OA Quick-Entry (confirmed with the user, 2026-09-26 — see chat
+// history / commit message for the full discussion of why the real bank
+// API / LINE-Notify / third-party-bot options were all ruled out first)
+//
+// Distinct from IntegrationSource/IntegrationEvent above on purpose: those
+// two model the FUTURE automated bank-feed pipeline described in
+// 06_INTEGRATION_SPECIFICATION.md (one source per year account, external
+// bank event ids, adapter contract for a system CSMJU doesn't have
+// verified access to yet). This feature is simpler and already fully
+// specified: a Treasurer's own LINE account sends a message to the
+// branch's own LINE Official Account; LINE's webhook tells us exactly
+// which LINE user sent it (`source.userId`); we resolve that to one of
+// our own `username`s via LineAccountLink, then resolve THAT username's
+// currently active year assignment the same way YearScopeService already
+// does everywhere else. No IntegrationSource row, no per-year
+// reconfiguration, no adapter boundary needed — this is closer to
+// "MANUAL entry from the web form" than to "automated bank feed", just
+// over a different transport. Forcing it into the bank-feed models would
+// be exactly the kind of unstated-assumption fit this project's docs
+// explicitly warn against.
+// ----------------------------------------------------------------------------
+
+// One physical LINE account <-> one CSMJU-BFTS user. Populated only via
+// the one-time linking flow (LineLinkCode below) — never inferred from a
+// LINE display name (Security Model / Integration Spec §10 both already
+// establish that a self-reported display name must never be trusted as
+// identity).
+model LineAccountLink {
+  id         String   @id @default(uuid()) @db.Uuid
+  lineUserId String   @unique @map("line_user_id") // LINE's own opaque user id (source.userId in the webhook)
+  userId     String   @unique @map("user_id") @db.Uuid
+  username   String   @map("username") // denormalized, base standards item #6 pattern
+  linkedAt   DateTime @default(now()) @map("linked_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("line_account_links")
+}
+
+// Short-lived, single-use code a Treasurer generates while logged into the
+// web app (already authenticated via the existing AuthGuard/RbacGuard —
+// see LineController#generateLinkCode) and then sends to the LINE OA to
+// prove "the person typing in LINE right now is the same person who is
+// logged in as this username" — the standard account-linking pattern
+// (same idea as linking a Slack/Discord bot to an app account). Without
+// this step, anyone who knew a username could claim to be that treasurer
+// over LINE.
+model LineLinkCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  code      String    @unique
+  userId    String    @map("user_id") @db.Uuid
+  username  String    @map("username")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at") // null = still usable (subject to expiresAt)
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("line_link_codes")
+}
+
+// One row per inbound LINE message the webhook receives, whether it
+// turned into a transaction or not — this is the audit/debugging trail
+// for "why didn't my message get recorded", independent of AuditLog
+// (which only records rows for transactions that were actually created).
+model LineMessageEvent {
+  id             String            @id @default(uuid()) @db.Uuid
+  lineUserId     String            @map("line_user_id")
+  username       String?           @map("username") // null if the sender wasn't linked yet
+  rawText        String            @map("raw_text")
+  parsedCategory String?           @map("parsed_category")
+  parsedAmount   Decimal?          @map("parsed_amount") @db.Decimal(14, 2)
+  parsedType     TransactionType?  @map("parsed_type")
+  status         LineMessageStatus @default(RECEIVED)
+  errorReason    String?           @map("error_reason")
+  transactionId  String?           @map("transaction_id") @db.Uuid
+  receivedAt     DateTime          @default(now()) @map("received_at")
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([lineUserId, receivedAt])
+  @@map("line_message_events")
+}
+
+enum LineMessageStatus {
+  RECEIVED               // row created, not yet processed (should be momentary)
+  LINK_CODE_CONSUMED     // message was a "ผูกบัญชี <code>" command and the code was valid
+  LINK_CODE_INVALID      // message was a "ผูกบัญชี <code>" command but the code was wrong/expired/used
+  UNLINKED_SENDER        // sender has no LineAccountLink and message wasn't a valid link command
+  NOT_TREASURER          // sender is linked, but their role isn't TREASURER (out of scope for MVP)
+  NO_ACTIVE_YEAR         // sender is a linked Treasurer but has no active UserYearAssignment right now
+  PARSE_FAILED           // could not extract an amount from the message text
+  CREATED                // successfully created a NEEDS_REVIEW/PENDING transaction
+
+  // Evidence-by-photo (confirmed with the user, 2026-09-27): a photo or
+  // file sent after a transaction report is bound to that Treasurer's
+  // most recent LINE-created transaction, if it's still in the
+  // "not yet decided" status for its type (PENDING for EXPENSE,
+  // NEEDS_REVIEW for INCOME — see evidence.service.ts) and within
+  // EVIDENCE_BINDING_WINDOW_MINUTES (see line.service.ts) — chosen over
+  // asking the user to pick from a list, since the natural chat flow is
+  // "type the amount, then immediately send the photo". Originally
+  // EXPENSE-only (Business Rule 6 read "บิลเป็นหลักฐานของ Expense" at the
+  // time); amended the same day after a real report showed the binding
+  // rejecting a photo meant for an income entry — Business Rule 6 itself
+  // was widened (confirmed with the user) rather than just special-cased
+  // here, so evidence.service.ts's upload() enforces the same rule this
+  // binding logic checks.
+  EVIDENCE_ATTACHED           // photo successfully attached as evidence
+  EVIDENCE_TARGET_NOT_FOUND   // no eligible recent transaction to attach to (see errorReason)
+  EVIDENCE_DOWNLOAD_FAILED    // found a target transaction, but downloading/saving the photo failed
 }
 
 // ----------------------------------------------------------------------------

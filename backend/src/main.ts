@@ -6,7 +6,13 @@ import { ResponseEnvelopeInterceptor } from './common/interceptors/response-enve
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: true — needed ONLY by LineSignatureGuard (line/guards/
+  // line-signature.guard.ts), which must HMAC the exact bytes LINE sent
+  // to verify x-line-signature; re-serializing the parsed req.body would
+  // not byte-for-byte match what LINE signed. Nest still parses req.body
+  // as JSON normally for every other route — this only additionally
+  // exposes req.rawBody as a Buffer alongside it.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   // Base standards item #2 (api-conventions.md Section 1/7): every

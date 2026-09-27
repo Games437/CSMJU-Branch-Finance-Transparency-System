@@ -7,7 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { Role, TransactionStatus } from '@prisma/client';
+import { Role, TransactionStatus, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { YearScopeService } from '../rbac/year-scope.service';
 import { AuditService } from '../audit/audit.service';
@@ -58,21 +58,38 @@ export class EvidenceService {
     if (!transaction) {
       throw new NotFoundException('Transaction not found.');
     }
-    if (transaction.type !== 'EXPENSE') {
-      // Business Rule 6: "บิลเป็นหลักฐานของ Expense" — evidence is an
-      // expense concept only.
-      throw new ConflictException('Evidence can only be attached to expense transactions.');
-    }
-    if (transaction.status !== TransactionStatus.PENDING) {
-      // ASSUMPTION: not explicitly stated in the spec. Once a transaction
-      // has been decided (approved/rejected/voided), allowing new
-      // evidence to attach would mean the record a Branch Head actually
-      // reviewed no longer matches what's stored — treated as tampering
-      // risk rather than a normal edit. Revisit if there's a legitimate
-      // post-decision evidence-attachment need (e.g. a receipt arriving
-      // late for an already-approved expense).
+
+    // Business Rule 6 (01_BUSINESS_RULES_SPECIFICATION.md), AMENDED
+    // 2026-09-27 — confirmed explicitly with the user after a real report
+    // came in through LINE: originally "บิลเป็นหลักฐานของ Expense" (evidence
+    // is an Expense-only concept), the rule now allows evidence on EITHER
+    // an EXPENSE or an INCOME transaction. This does NOT touch Business
+    // Rule 4.2 ("Expense ต้องมีหลักฐาน...ก่อนเข้าสู่ขั้นตอนตรวจสอบ") —
+    // that's a separate, Expense-only REQUIREMENT gate enforced at
+    // approve-time in approvals.service.ts; confirmIncome() still does
+    // not require evidence to exist. This is only about whether evidence
+    // MAY be attached.
+    //
+    // ADJACENT ASSUMPTION carried over unchanged: once a transaction has
+    // been decided (approved/rejected/voided), new evidence can no longer
+    // attach — the record a Branch Head actually reviewed must not
+    // change out from under them after the fact. "Decided" means
+    // APPROVED/REJECTED for EXPENSE (which starts PENDING) and APPROVED
+    // for INCOME (which starts NEEDS_REVIEW — see approvals.service.ts's
+    // confirmIncome()). Revisit if there's a legitimate post-decision
+    // evidence-attachment need (e.g. a receipt arriving late for an
+    // already-approved item).
+    // NOTE: TransactionType.ADJUSTMENT falls into the ": NEEDS_REVIEW"
+    // branch below by elimination — no code path creates an ADJUSTMENT
+    // transaction yet (Balance Rules: "ยังไม่ implement flow สร้าง
+    // adjustment จริง"), so this is currently unreachable, not a
+    // deliberate decision about that type's status machine. Revisit once
+    // that flow is built rather than assuming this guess is right then.
+    const expectedNotYetDecidedStatus =
+      transaction.type === TransactionType.EXPENSE ? TransactionStatus.PENDING : TransactionStatus.NEEDS_REVIEW;
+    if (transaction.status !== expectedNotYetDecidedStatus) {
       throw new ConflictException(
-        `Transaction is ${transaction.status}, not PENDING — evidence can no longer be attached.`,
+        `Transaction is ${transaction.status}, not ${expectedNotYetDecidedStatus} — evidence can no longer be attached.`,
       );
     }
 

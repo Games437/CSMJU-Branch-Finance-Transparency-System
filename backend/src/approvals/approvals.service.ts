@@ -42,16 +42,45 @@ export class ApprovalsService {
     });
   }
 
+  /**
+   * AMENDED 2026-09-27 (user's explicit request, "เพิ่มปุ่มไม่อนุมัติด้วยใน
+   * ส่วนรายรับ"): originally EXPENSE-only (Business Rule 5 — "PENDING →
+   * APPROVED หรือ REJECTED โดย Branch Head" — was written for the Expense
+   * flow specifically, and Section 31 #9 only ever resolved a CONFIRM
+   * step for INCOME, never a reject path). Generalized the same way
+   * void() already is below (expectedType: undefined) rather than adding
+   * a parallel rejectIncome() endpoint: unlike confirm-vs-approve (which
+   * differ in real-world meaning), reject is the same action for either
+   * type — a Branch Head saying "this entry is wrong/duplicate/not
+   * ours" — it just starts from a different not-yet-decided status
+   * depending on type (PENDING for EXPENSE, NEEDS_REVIEW for INCOME,
+   * same rule evidence.service.ts and line.service.ts already use).
+   * ADJUSTMENT falls into the NEEDS_REVIEW branch by elimination only —
+   * unreached today, same caveat as those two files.
+   *
+   * Fetches the transaction once here (to know which fromStatus applies)
+   * and again inside transitionStatus() (for its own status/type/self-
+   * approval checks) — a small redundant read, not a race: the actual
+   * state change still happens once, atomically, inside
+   * transitionStatus()'s own transaction.
+   */
   async reject(user: AuthenticatedUser, transactionId: string, dto: RejectTransactionDto) {
+    const transaction = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
+    if (!transaction) {
+      throw new NotFoundException('Transaction not found.');
+    }
+    const fromStatus =
+      transaction.type === TransactionType.EXPENSE ? TransactionStatus.PENDING : TransactionStatus.NEEDS_REVIEW;
+
     return this.transitionStatus({
       user,
       transactionId,
       decision: 'REJECT',
-      fromStatus: TransactionStatus.PENDING,
+      fromStatus,
       toStatus: TransactionStatus.REJECTED,
       reason: dto.reason,
       setApprovedFields: false,
-      expectedType: TransactionType.EXPENSE,
+      expectedType: undefined, // both INCOME and EXPENSE can now be rejected — see comment above
     });
   }
 
@@ -79,10 +108,14 @@ export class ApprovalsService {
    * the amount before it counts toward the balance. So BANK_IMPORT
    * income transactions are created at NEEDS_REVIEW (not APPROVED — see
    * schema.prisma's earlier ASSUMPTION note, now superseded by this
-   * confirmed rule), and this is the confirmation step. No evidence
-   * check (that's an EXPENSE-only concept), but everything else —
-   * self-approval prevention, atomic status+audit write — is identical
-   * to expense approval.
+   * confirmed rule), and this is the confirmation step. Still no
+   * evidence-REQUIRED check here — Business Rule 4.2 ("evidence before
+   * review") only ever applied to Expense, and that hasn't changed.
+   * Evidence MAY now optionally exist on an income transaction too (see
+   * evidence.service.ts, amended 2026-09-27 — Business Rule 6 no longer
+   * restricts evidence to Expense), but confirming income never
+   * requires it. Everything else here — self-approval prevention,
+   * atomic status+audit write — is identical to expense approval.
    */
   async confirmIncome(user: AuthenticatedUser, transactionId: string) {
     return this.transitionStatus({

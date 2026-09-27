@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/", label: "ภาพรวม" },
   { href: "/expenses", label: "รายการเบิกจ่าย (เหรัญญิก)" },
+  { href: "/line-link", label: "เชื่อมต่อ LINE (เหรัญญิก)" },
   { href: "/approvals", label: "รายการรออนุมัติ (หัวหน้าสาขา)" },
   { href: "/year-accounts", label: "รายละเอียดบัญชีชั้นปี" },
   { href: "/audit-logs", label: "ประวัติการตรวจสอบ (หัวหน้าสาขา)" },
