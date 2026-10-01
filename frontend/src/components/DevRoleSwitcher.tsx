@@ -3,35 +3,36 @@
 import { DEV_USERS, useDevAuth } from "@/lib/dev-auth";
 
 /**
- * DEV-ONLY. Fixed banner for switching which seeded user the frontend
- * acts as. This entire component should be deleted once real SSO auth
- * replaces the dev header stub — it exists only because there is
- * currently no other way to test role-specific views.
+ * DEV-ONLY. Restyled to sit in the "user menu" slot at the bottom of
+ * CsmjuAppShell's sidebar (in place of a real sign-out control, which
+ * doesn't exist yet — see this file's original header comment, still
+ * true). Calls the exact same `useDevAuth()`/`setActingAs()` mechanism as
+ * before; only the JSX/classNames changed.
  */
 export function DevRoleSwitcher() {
   const { externalUserId, role, setActingAs } = useDevAuth();
 
   return (
-    <div className="border-b-2 border-brass bg-brassSoft px-4 py-2 text-sm text-ink">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3">
-        <span className="font-semibold uppercase tracking-wide text-inkFaint">
-          Dev: acting as
-        </span>
+    <div className="rounded-xl border border-white/25 bg-white/10 p-3 text-white backdrop-blur-sm">
+      <p className="mb-2 text-caption text-white/60">Dev: acting as</p>
+      <div className="flex flex-col gap-1.5">
         {DEV_USERS.map((u) => (
           <button
             key={u.externalUserId}
+            type="button"
             onClick={() => setActingAs(u.externalUserId)}
-            className={`rounded-full border px-3 py-1 transition-colors ${
+            aria-current={externalUserId === u.externalUserId ? "true" : undefined}
+            className={`rounded-lg px-3 py-2 text-left text-label-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
               externalUserId === u.externalUserId
-                ? "border-jade bg-jade text-white"
-                : "border-paperLine bg-white text-ink hover:border-jade"
+                ? "bg-white/20 text-white"
+                : "text-white/70 hover:bg-white/20 hover:text-white"
             }`}
           >
             {u.label}
           </button>
         ))}
-        {role && <span className="ml-auto text-inkFaint">role: {role}</span>}
       </div>
+      {role && <p className="mt-2 text-caption text-white/50">role: {role}</p>}
     </div>
   );
 }

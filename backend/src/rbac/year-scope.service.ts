@@ -21,9 +21,12 @@ export class YearScopeService {
    * handovers) — callers must treat that as "scoped to nothing", not
    * "unscoped".
    */
-  async getActiveYearAccountIds(userId: string): Promise<string[]> {
+  // AMENDED 2026-09-27 ("ยึด repo กลาง", DD-01): parameter and query field
+  // renamed to localUserId / assigneeId — see users.service.ts's identical
+  // comment for why.
+  async getActiveYearAccountIds(localUserId: string): Promise<string[]> {
     const assignments = await this.prisma.userYearAssignment.findMany({
-      where: { userId, activeTo: null },
+      where: { assigneeId: localUserId, activeTo: null },
       select: { yearAccountId: true },
     });
     return assignments.map((a) => a.yearAccountId);

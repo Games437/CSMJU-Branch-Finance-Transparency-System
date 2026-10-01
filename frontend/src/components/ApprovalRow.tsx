@@ -9,7 +9,16 @@ import {
   type PendingApprovalItem,
   type Transaction,
 } from "@/lib/api";
-import { statusBadgeClasses, statusLabelTh } from "@/lib/status-styles";
+import { StatusBadge } from "@/components/csmju/StatusBadge";
+import {
+  alertClasses,
+  cardClass,
+  dangerButtonClass,
+  inputClass,
+  labelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+} from "@/components/csmju/ui";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 
 // ============================================================================
@@ -32,7 +41,7 @@ const dateFmt = new Intl.DateTimeFormat("th-TH", { year: "numeric", month: "shor
 
 interface Props {
   item: PendingApprovalItem;
-  externalUserId: string;
+  externalUserId: string | null;
   onResolved: (transactionId: string, updated: Transaction) => void;
 }
 
@@ -79,24 +88,24 @@ export function ApprovalRow({ item, externalUserId, onResolved }: Props) {
   };
 
   return (
-    <div className="rounded-passbook border-2 border-paperLine bg-white">
+    <div className={cardClass}>
       <button
+        type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center justify-between gap-3 p-4 text-left"
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-surface/50"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium text-ink">{item.description}</p>
-          <p className="text-xs text-inkFaint">{dateFmt.format(new Date(item.transactionDate))}</p>
+          <p className="truncate text-body-md font-medium text-on-surface">{item.description}</p>
+          <p className="text-caption text-on-surface-variant">{dateFmt.format(new Date(item.transactionDate))}</p>
         </div>
-        <span className="font-mono font-semibold text-ink">{thb.format(Number(item.amount))}</span>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClasses(item.status)}`}>
-          {statusLabelTh(item.status)}
-        </span>
+        <span className="tabular-nums font-semibold text-on-surface">{thb.format(Number(item.amount))}</span>
+        <StatusBadge status={item.status} />
       </button>
 
       {expanded && (
-        <div className="border-t border-paperLine p-4">
-          {error && <p className="mb-3 text-sm text-rust">{error}</p>}
+        <div className="border-t border-outline-variant/40 p-4">
+          {error && <div className={`${alertClasses.error} mb-3`}>{error}</div>}
 
           {/* Business Rule 6 (amended 2026-09-27): evidence can exist on
               either EXPENSE or INCOME, so the Branch Head needs to be able
@@ -123,30 +132,23 @@ export function ApprovalRow({ item, externalUserId, onResolved }: Props) {
               since listPendingApprovals() only ever surfaces these two
               types here (this file's header comment). */}
           {!showRejectForm && (
-            <div className="flex gap-2">
-              <button
-                onClick={item.type === "INCOME" ? handleConfirmIncome : handleApprove}
-                disabled={acting}
-                className="rounded-full bg-jade px-4 py-1.5 text-sm text-white disabled:opacity-50"
-              >
-                {acting ? "กำลังดำเนินการ..." : item.type === "INCOME" ? "ยืนยันรายรับ" : "อนุมัติ"}
+            <div className="flex justify-end gap-3">
+              <button type="button" onClick={() => setShowRejectForm(true)} disabled={acting} className={dangerButtonClass}>
+                ไม่อนุมัติ
               </button>
               <button
-                onClick={() => setShowRejectForm(true)}
+                type="button"
+                onClick={item.type === "INCOME" ? handleConfirmIncome : handleApprove}
                 disabled={acting}
-                className="rounded-full border border-rust px-4 py-1.5 text-sm text-rust disabled:opacity-50"
+                className={primaryButtonClass}
               >
-                ไม่อนุมัติ
+                {acting ? "กำลังดำเนินการ..." : item.type === "INCOME" ? "ยืนยันรายรับ" : "อนุมัติ"}
               </button>
             </div>
           )}
 
           {showRejectForm && (
-            <RejectForm
-              acting={acting}
-              onCancel={() => setShowRejectForm(false)}
-              onSubmit={handleReject}
-            />
+            <RejectForm acting={acting} onCancel={() => setShowRejectForm(false)} onSubmit={handleReject} />
           )}
         </div>
       )}
@@ -174,32 +176,23 @@ function RejectForm({
 
   return (
     <form onSubmit={handleSubmit}>
-      <label className="mb-2 block text-sm text-inkFaint">
-        เหตุผลที่ไม่อนุมัติ (จำเป็นต้องระบุ)
+      <label className="mb-2 block">
+        <span className={labelClass}>เหตุผลที่ไม่อนุมัติ (จำเป็นต้องระบุ)</span>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           required
           maxLength={500}
           rows={2}
-          className="mt-1 w-full rounded border border-paperLine px-2 py-1 text-ink"
+          className={inputClass}
         />
       </label>
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={acting || !reason.trim()}
-          className="rounded-full bg-rust px-4 py-1.5 text-sm text-white disabled:opacity-50"
-        >
-          {acting ? "กำลังดำเนินการ..." : "ยืนยันการไม่อนุมัติ"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={acting}
-          className="rounded-full border border-paperLine px-4 py-1.5 text-sm text-inkFaint disabled:opacity-50"
-        >
+      <div className="flex justify-end gap-3">
+        <button type="button" onClick={onCancel} disabled={acting} className={secondaryButtonClass}>
           ยกเลิก
+        </button>
+        <button type="submit" disabled={acting || !reason.trim()} className={dangerButtonClass}>
+          {acting ? "กำลังดำเนินการ..." : "ยืนยันการไม่อนุมัติ"}
         </button>
       </div>
     </form>

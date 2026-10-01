@@ -1,0 +1,25 @@
+# AMENDED 2026-09-27 ("ยึด repo กลาง", QA-05): migrated from npm to pnpm
+# per csmju2030-standards/scripts/check-qa.sh — a pnpm workspace at the
+# repo root, no package-lock.json/yarn.lock anywhere (npm's lockfiles
+# were removed as part of this same change).
+#
+# No root package.json was added alongside this file: one is optional
+# (check-qa.sh's QA-06 duplicate-name/--filter check only runs `if
+# [[ -f package.json ]]`), and this batch's scope was specifically "npm
+# -> pnpm", not inventing new root-level scripts. backend/package.json
+# and frontend/package.json keep their own scripts unchanged; run them
+# with `pnpm --filter <name> <script>` or `pnpm -C backend|frontend
+# <script>` from the root.
+packages:
+  - "backend"
+  - "frontend"
+
+# AMENDED 2026-09-27 (tech-stack.md v1.1, Prisma 7.9.1 driver-adapter bump):
+# pnpm 10 blocks every dependency's install-time build/postinstall script by
+# default. @prisma/engines and prisma both need theirs to run (they fetch
+# the native query-engine binary) — without this, `prisma generate` /
+# `migrate deploy` fail with a missing-engine error. @nestjs/core and
+# unrs-resolver's scripts are unrelated to our runtime and stay blocked.
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - "prisma"

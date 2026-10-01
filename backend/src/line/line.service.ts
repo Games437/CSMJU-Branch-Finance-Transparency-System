@@ -73,10 +73,12 @@ export class LineService {
     const code = this.randomCode();
     const expiresAt = new Date(Date.now() + LINK_CODE_TTL_MS);
 
+    // AMENDED 2026-09-27 ("ยึด repo กลาง", DD-01): lineLinkCode's FK field
+    // is now ownerId (see schema.prisma's LineLinkCode comment).
     await this.prisma.lineLinkCode.create({
       data: {
         code,
-        userId: user.id,
+        ownerId: user.id,
         username: user.externalUserId,
         expiresAt,
       },
@@ -86,17 +88,17 @@ export class LineService {
   }
 
   async getLinkStatus(user: AuthenticatedUser): Promise<{ linked: boolean; linkedAt: string | null }> {
-    const link = await this.prisma.lineAccountLink.findUnique({ where: { userId: user.id } });
+    const link = await this.prisma.lineAccountLink.findUnique({ where: { ownerId: user.id } });
     return { linked: Boolean(link), linkedAt: link?.linkedAt.toISOString() ?? null };
   }
 
   async unlink(user: AuthenticatedUser): Promise<void> {
-    const existing = await this.prisma.lineAccountLink.findUnique({ where: { userId: user.id } });
+    const existing = await this.prisma.lineAccountLink.findUnique({ where: { ownerId: user.id } });
     if (!existing) {
       return; // idempotent — nothing to unlink is not an error
     }
 
-    await this.prisma.lineAccountLink.delete({ where: { userId: user.id } });
+    await this.prisma.lineAccountLink.delete({ where: { ownerId: user.id } });
     await this.audit.record({
       actorId: user.id,
       actorUsername: user.externalUserId,
@@ -219,7 +221,7 @@ export class LineService {
       return null;
     }
 
-    const dbUser = await this.prisma.user.findUnique({ where: { id: link.userId } });
+    const dbUser = await this.prisma.user.findUnique({ where: { id: link.ownerId } });
 
     // ASSUMPTION (confirmed with the user, 2026-09-26): only TREASURER is
     // in scope for this quick-entry channel for the MVP — a Branch Head
@@ -268,13 +270,14 @@ export class LineService {
 
     // Re-linking safety: remove any stale link this LINE account or this
     // username already held (phone change / account handover), so the
-    // unique constraints on both lineUserId and userId never conflict.
+    // unique constraints on both lineUserId and ownerId never conflict.
+    // (AMENDED 2026-09-27, DD-01: renamed to ownerId on both models.)
     await this.prisma.lineAccountLink.deleteMany({
-      where: { OR: [{ lineUserId }, { userId: linkCode.userId }] },
+      where: { OR: [{ lineUserId }, { ownerId: linkCode.ownerId }] },
     });
     await this.prisma.$transaction([
       this.prisma.lineAccountLink.create({
-        data: { lineUserId, userId: linkCode.userId, username: linkCode.username },
+        data: { lineUserId, ownerId: linkCode.ownerId, username: linkCode.username },
       }),
       this.prisma.lineLinkCode.update({ where: { id: linkCode.id }, data: { usedAt: new Date() } }),
       this.prisma.lineMessageEvent.create({
@@ -283,11 +286,11 @@ export class LineService {
     ]);
 
     await this.audit.record({
-      actorId: linkCode.userId,
+      actorId: linkCode.ownerId,
       actorUsername: linkCode.username,
       action: "LINE_ACCOUNT_LINKED",
       targetType: "User",
-      targetId: linkCode.userId,
+      targetId: linkCode.ownerId,
       afterJson: { lineUserId },
     });
 

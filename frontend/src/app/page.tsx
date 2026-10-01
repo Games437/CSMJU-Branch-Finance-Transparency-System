@@ -11,6 +11,10 @@ import {
   type YearAccountListItem,
   type YearAccountSummary,
 } from "@/lib/api";
+import { PageHeader } from "@/components/csmju/PageHeader";
+import { EmptyState } from "@/components/csmju/EmptyState";
+import { Skeleton, SkeletonCard } from "@/components/csmju/Skeleton";
+import { alertClasses, cardClass } from "@/components/csmju/ui";
 
 const thb = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" });
 
@@ -74,45 +78,44 @@ export default function DashboardPage() {
 
   if (!externalUserId) {
     return (
-      <main className="mx-auto max-w-5xl p-6">
-        <p className="text-inkFaint">เลือกผู้ใช้งานจากแถบด้านบนเพื่อเข้าสู่ระบบ (dev only)</p>
-      </main>
+      <EmptyState title="เลือกผู้ใช้งานจากเมนูด้านข้างเพื่อเข้าสู่ระบบ" description="(dev only)" />
     );
   }
 
   return (
-    <main className="mx-auto max-w-5xl p-6">
-      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">
-        CSMJU Branch Finance — ภาพรวม
-      </h1>
-      <p className="mb-6 text-sm text-inkFaint">
-        ระบบตรวจสอบและความโปร่งใสทางการเงินของสาขา CSMJU
-      </p>
+    <>
+      <PageHeader
+        title="ภาพรวม"
+        description="ระบบตรวจสอบและความโปร่งใสทางการเงินของสาขา CSMJU"
+      />
 
       {role === "BRANCH_HEAD" && (
-        <section className="mb-6 rounded-passbook border-2 border-brass bg-brassSoft p-4">
-          <h2 className="font-semibold text-ink">รายการรออนุมัติ</h2>
+        <section className={`${cardClass} p-5`}>
+          <h2 className="mb-2 text-headline-md font-display text-on-surface">รายการรออนุมัติ</h2>
           {pendingApprovals === null ? (
-            <p className="text-sm text-inkFaint">กำลังโหลด...</p>
+            <p className="text-body-md text-on-surface-variant">กำลังโหลด...</p>
           ) : pendingApprovals.length === 0 ? (
-            <p className="text-sm text-inkFaint">ไม่มีรายการรออนุมัติ</p>
+            <p className="text-body-md text-on-surface-variant">ไม่มีรายการรออนุมัติ</p>
           ) : (
-            <p className="text-sm text-ink">
-              มี <span className="font-mono font-semibold">{pendingApprovals.length}</span>{" "}
+            <p className="text-body-md text-on-surface">
+              มี <span className="tabular-nums font-semibold text-primary-container">{pendingApprovals.length}</span>{" "}
               รายการรอดำเนินการ (ค่าใช้จ่ายรออนุมัติ / เงินเข้ารอยืนยัน)
             </p>
           )}
         </section>
       )}
 
-      {error && (
-        <div className="mb-6 rounded-passbook border-2 border-rust bg-rustSoft p-4 text-rust">
-          {error}
+      {error && <div className={alertClasses.error}>{error}</div>}
+
+      {loading && yearAccounts.length === 0 && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SkeletonCard />
+          <SkeletonCard />
         </div>
       )}
 
-      {loading && yearAccounts.length === 0 && (
-        <p className="text-inkFaint">กำลังโหลดข้อมูล...</p>
+      {!loading && yearAccounts.length === 0 && !error && (
+        <EmptyState title="ยังไม่มีบัญชีชั้นปีในระบบ" description="ยังไม่มีข้อมูลให้แสดงในขณะนี้" />
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -120,7 +123,7 @@ export default function DashboardPage() {
           <YearAccountCard key={account.id} account={account} summary={summaries[account.id]} />
         ))}
       </div>
-    </main>
+    </>
   );
 }
 
@@ -132,37 +135,40 @@ function YearAccountCard({
   summary: YearAccountSummary | undefined;
 }) {
   return (
-    <div className="rounded-passbook border-2 border-paperLine bg-white p-5 shadow-sm">
+    <div className={`${cardClass} p-5`}>
       <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="font-display text-lg font-semibold text-ink">{account.name}</h3>
-        <span className="rounded-full bg-jadeSoft px-2 py-0.5 text-xs font-medium text-jade">
+        <h3 className="font-display text-headline-md text-on-surface">{account.name}</h3>
+        <span className="rounded-full bg-primary-container/10 px-2 py-0.5 text-label-sm text-primary-container">
           ปี {account.yearLevel}
         </span>
       </div>
 
       {!summary ? (
-        <p className="text-sm text-inkFaint">กำลังโหลดยอด...</p>
+        <div className="space-y-2">
+          <Skeleton className="h-9 w-40" />
+          <Skeleton className="h-3 w-24" />
+        </div>
       ) : (
         <>
-          <p className="font-mono text-3xl font-semibold text-ink">
+          <p className="tabular-nums font-display text-display-lg text-on-surface">
             {thb.format(summary.balance)}
           </p>
-          <p className="mb-3 text-xs text-inkFaint">ยอดคงเหลือ (อนุมัติแล้ว)</p>
+          <p className="mb-3 text-caption text-on-surface-variant">ยอดคงเหลือ (อนุมัติแล้ว)</p>
 
           {summary.pendingExpenseTotal > 0 && (
-            <p className="mb-3 rounded-full bg-brassSoft px-3 py-1 text-xs text-brass">
+            <p className="mb-3 rounded-full bg-brand-amber/10 px-3 py-1 text-label-sm text-amber-700">
               มีคำขอเบิกรออนุมัติรวม {thb.format(summary.pendingExpenseTotal)} (ยังไม่หักจากยอดนี้)
             </p>
           )}
 
-          <dl className="grid grid-cols-2 gap-2 border-t border-paperLine pt-3 text-sm">
+          <dl className="grid grid-cols-2 gap-2 border-t border-outline-variant/40 pt-3 text-body-md">
             <div>
-              <dt className="text-inkFaint">เงินเข้า (อนุมัติแล้ว)</dt>
-              <dd className="font-mono text-jade">{thb.format(summary.approvedIncome)}</dd>
+              <dt className="text-caption text-on-surface-variant">เงินเข้า (อนุมัติแล้ว)</dt>
+              <dd className="tabular-nums text-emerald-700">{thb.format(summary.approvedIncome)}</dd>
             </div>
             <div>
-              <dt className="text-inkFaint">เงินออก (อนุมัติแล้ว)</dt>
-              <dd className="font-mono text-rust">{thb.format(summary.approvedExpense)}</dd>
+              <dt className="text-caption text-on-surface-variant">เงินออก (อนุมัติแล้ว)</dt>
+              <dd className="tabular-nums text-error">{thb.format(summary.approvedExpense)}</dd>
             </div>
           </dl>
         </>

@@ -26,10 +26,13 @@ export class ListAuditLogsQueryDto {
   @Min(1)
   page: number = 1;
 
+  // AMENDED 2026-09-27 ("ยึด repo กลาง", API-07) — see the identical
+  // comment on ListTransactionsQueryDto.limit for why this was renamed
+  // from pageSize.
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(100)
-  pageSize: number = 20;
+  limit: number = 20;
 }

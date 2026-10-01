@@ -76,7 +76,7 @@ export class AuditService {
     if (query.action) where.action = query.action;
     if (query.targetType) where.targetType = query.targetType;
 
-    const skip = (query.page - 1) * query.pageSize;
+    const skip = (query.page - 1) * query.limit;
 
     const [items, total] = await Promise.all([
       this.prisma.auditLog.findMany({
@@ -84,12 +84,12 @@ export class AuditService {
         include: AUDIT_LOG_INCLUDE,
         orderBy: { createdAt: 'desc' },
         skip,
-        take: query.pageSize,
+        take: query.limit,
       }),
       this.prisma.auditLog.count({ where }),
     ]);
 
-    return { items, page: query.page, pageSize: query.pageSize, total };
+    return { items, page: query.page, limit: query.limit, total };
   }
 
   /**

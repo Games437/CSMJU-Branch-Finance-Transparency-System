@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ApiError, createExpense, type Transaction } from "@/lib/api";
+import { alertClasses, cardClass, inputClass, labelClass, primaryButtonClass } from "@/components/csmju/ui";
 
 interface Props {
   externalUserId: string;
@@ -41,69 +42,64 @@ export function CreateExpenseForm({ externalUserId, yearAccountId, onCreated }: 
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="mb-6 rounded-passbook border-2 border-jade bg-jadeSoft p-4"
-    >
-      <h2 className="mb-3 font-display text-lg font-semibold text-ink">สร้างรายการเบิกจ่ายใหม่</h2>
-      {error && <p className="mb-3 rounded bg-rustSoft p-2 text-sm text-rust">{error}</p>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="text-sm text-inkFaint">
-          จำนวนเงิน (บาท)
+    <form onSubmit={handleSubmit} className={`${cardClass} p-5`}>
+      <h2 className="mb-3 font-display text-headline-md text-on-surface">สร้างรายการเบิกจ่ายใหม่</h2>
+      {error && <div className={`${alertClasses.error} mb-3`}>{error}</div>}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label>
+          <span className={labelClass}>จำนวนเงิน (บาท)</span>
           <input
             type="number"
             step="0.01"
             min="0.01"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full rounded border border-paperLine bg-white px-2 py-1.5 font-mono text-ink"
+            className={`${inputClass} tabular-nums font-mono`}
             required
           />
         </label>
-        <label className="text-sm text-inkFaint">
-          วันที่
+        <label>
+          <span className={labelClass}>วันที่</span>
           <input
             type="date"
             value={transactionDate}
             onChange={(e) => setTransactionDate(e.target.value)}
-            className="mt-1 w-full rounded border border-paperLine bg-white px-2 py-1.5 text-ink"
+            className={inputClass}
             required
           />
         </label>
-        <label className="text-sm text-inkFaint sm:col-span-2">
-          รายละเอียด
+        <label className="sm:col-span-2">
+          <span className={labelClass}>รายละเอียด</span>
           <input
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="เช่น ค่าอุปกรณ์กิจกรรมรับน้อง"
-            className="mt-1 w-full rounded border border-paperLine bg-white px-2 py-1.5 text-ink"
+            className={inputClass}
             required
             maxLength={500}
           />
         </label>
-        <label className="text-sm text-inkFaint">
-          หมวดหมู่ (ถ้ามี)
+        <label>
+          <span className={labelClass}>หมวดหมู่ (ถ้ามี)</span>
           <input
             type="text"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             placeholder="เช่น SUPPLIES"
-            className="mt-1 w-full rounded border border-paperLine bg-white px-2 py-1.5 text-ink"
+            className={inputClass}
             maxLength={100}
           />
         </label>
       </div>
-      <p className="mt-3 text-xs text-inkFaint">
+      <p className="mt-3 text-caption text-on-surface-variant">
         รายการจะเข้าสถานะ &quot;รออนุมัติ&quot; — ต้องแนบหลักฐาน/บิลก่อนหัวหน้าสาขาจะอนุมัติได้
       </p>
-      <button
-        type="submit"
-        disabled={submitting}
-        className="mt-3 rounded-full bg-jade px-5 py-2 text-sm font-medium text-white disabled:opacity-50"
-      >
-        {submitting ? "กำลังสร้าง..." : "สร้างรายการ"}
-      </button>
+      <div className="mt-4 flex justify-end">
+        <button type="submit" disabled={submitting} className={primaryButtonClass}>
+          {submitting ? "กำลังสร้าง..." : "สร้างรายการ"}
+        </button>
+      </div>
     </form>
   );
 }

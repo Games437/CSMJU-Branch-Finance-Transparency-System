@@ -11,7 +11,17 @@ import {
   type EvidenceMeta,
   type Transaction,
 } from "@/lib/api";
-import { statusBadgeClasses, statusLabelTh } from "@/lib/status-styles";
+import { StatusBadge } from "@/components/csmju/StatusBadge";
+import {
+  alertClasses,
+  cardClass,
+  dangerButtonClass,
+  inputClass,
+  labelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  tonalButtonClass,
+} from "@/components/csmju/ui";
 
 const thb = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" });
 const dateFmt = new Intl.DateTimeFormat("th-TH", { year: "numeric", month: "short", day: "numeric" });
@@ -28,44 +38,32 @@ export function ExpenseRow({ transaction, externalUserId, currentUserId, onUpdat
   const canEdit = transaction.status === "PENDING" && transaction.createdBy === currentUserId;
 
   return (
-    <div className="rounded-passbook border-2 border-paperLine bg-white">
+    <div className={cardClass}>
       <button
+        type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center justify-between gap-3 p-4 text-left"
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-surface/50"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium text-ink">{transaction.description}</p>
-          <p className="text-xs text-inkFaint">
+          <p className="truncate text-body-md font-medium text-on-surface">{transaction.description}</p>
+          <p className="text-caption text-on-surface-variant">
             {dateFmt.format(new Date(transaction.transactionDate))}
             {transaction.category ? ` · ${transaction.category}` : ""}
           </p>
         </div>
-        <span className="font-mono font-semibold text-ink">{thb.format(Number(transaction.amount))}</span>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClasses(transaction.status)}`}>
-          {statusLabelTh(transaction.status)}
-        </span>
+        <span className="tabular-nums font-semibold text-on-surface">{thb.format(Number(transaction.amount))}</span>
+        <StatusBadge status={transaction.status} />
       </button>
 
       {expanded && (
-        <div className="border-t border-paperLine p-4">
-          <EvidenceSection
-            transaction={transaction}
-            externalUserId={externalUserId}
-            canUpload={canEdit}
-          />
+        <div className="border-t border-outline-variant/40 p-4">
+          <EvidenceSection transaction={transaction} externalUserId={externalUserId} canUpload={canEdit} />
           {canEdit && (
-            <EditForm
-              transaction={transaction}
-              externalUserId={externalUserId}
-              onUpdated={onUpdated}
-            />
+            <EditForm transaction={transaction} externalUserId={externalUserId} onUpdated={onUpdated} />
           )}
           {canEdit && (
-            <CancelSection
-              transaction={transaction}
-              externalUserId={externalUserId}
-              onUpdated={onUpdated}
-            />
+            <CancelSection transaction={transaction} externalUserId={externalUserId} onUpdated={onUpdated} />
           )}
         </div>
       )}
@@ -121,22 +119,22 @@ function EvidenceSection({
 
   return (
     <div className="mb-4">
-      <h4 className="mb-2 text-sm font-semibold text-ink">หลักฐาน/บิล</h4>
-      {error && <p className="mb-2 text-sm text-rust">{error}</p>}
+      <h4 className="mb-2 text-label-md text-on-surface">หลักฐาน/บิล</h4>
+      {error && <p className="mb-2 text-body-md text-error">{error}</p>}
 
       {evidence === null ? (
-        <p className="text-sm text-inkFaint">กำลังโหลด...</p>
+        <p className="text-body-md text-on-surface-variant">กำลังโหลด...</p>
       ) : currentEvidence ? (
         <EvidencePreview evidence={currentEvidence} externalUserId={externalUserId} />
       ) : (
-        <p className="mb-2 text-sm text-rust">
+        <p className={`${alertClasses.warning} mb-2`}>
           ยังไม่มีหลักฐานแนบ — ต้องแนบก่อนจึงจะอนุมัติได้ (ตามกฎการเงินข้อ 4.2)
         </p>
       )}
 
       {canUpload && (
         <div className="mt-2">
-          <label className="inline-block cursor-pointer rounded-full border border-jade px-3 py-1 text-xs text-jade hover:bg-jadeSoft">
+          <label className={`${tonalButtonClass} inline-flex cursor-pointer`}>
             {uploading ? "กำลังอัปโหลด..." : currentEvidence ? "แทนที่ไฟล์ใหม่" : "อัปโหลดไฟล์"}
             <input
               ref={fileInputRef}
@@ -147,7 +145,7 @@ function EvidenceSection({
               onChange={handleFileChange}
             />
           </label>
-          <p className="mt-1 text-xs text-inkFaint">รองรับ PDF, JPEG, PNG, WEBP ขนาดไม่เกิน 10MB</p>
+          <p className="mt-1 text-caption text-on-surface-variant">รองรับ PDF, JPEG, PNG, WEBP ขนาดไม่เกิน 10MB</p>
         </div>
       )}
     </div>
@@ -171,23 +169,28 @@ function EvidencePreview({ evidence, externalUserId }: { evidence: EvidenceMeta;
   }, [evidence.id, externalUserId]);
 
   return (
-    <div className="flex items-center gap-3 rounded-passbook border border-paperLine bg-paper p-2">
+    <div className="flex items-center gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-2">
       {objectUrl && evidence.mimeType.startsWith("image/") ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={objectUrl} alt={evidence.originalFilename} className="h-16 w-16 rounded object-cover" />
+        <img src={objectUrl} alt={evidence.originalFilename} className="h-16 w-16 rounded-lg object-cover" />
       ) : (
-        <span className="flex h-16 w-16 items-center justify-center rounded bg-jadeSoft text-xs text-jade">
+        <span className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary-container/10 text-label-sm text-primary-container">
           PDF
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-ink">{evidence.originalFilename}</p>
-        <p className="text-xs text-inkFaint">
+        <p className="truncate text-body-md text-on-surface">{evidence.originalFilename}</p>
+        <p className="text-caption text-on-surface-variant">
           เวอร์ชัน {evidence.version} · {(evidence.sizeBytes / 1024).toFixed(0)} KB
         </p>
       </div>
       {objectUrl && (
-        <a href={objectUrl} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-jade underline">
+        <a
+          href={objectUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="shrink-0 text-label-sm text-primary-container underline"
+        >
           เปิดดู
         </a>
       )}
@@ -229,51 +232,49 @@ function EditForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="border-t border-paperLine pt-4">
-      <h4 className="mb-2 text-sm font-semibold text-ink">แก้ไขรายการ (ทำได้เฉพาะขณะรออนุมัติ)</h4>
-      {error && <p className="mb-2 text-sm text-rust">{error}</p>}
+    <form onSubmit={handleSubmit} className="border-t border-outline-variant/40 pt-4">
+      <h4 className="mb-2 text-label-md text-on-surface">แก้ไขรายการ (ทำได้เฉพาะขณะรออนุมัติ)</h4>
+      {error && <p className={`${alertClasses.error} mb-2`}>{error}</p>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <label className="text-sm text-inkFaint">
-          จำนวนเงิน
+        <label>
+          <span className={labelClass}>จำนวนเงิน</span>
           <input
             type="number"
             step="0.01"
             min="0.01"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full rounded border border-paperLine px-2 py-1 font-mono text-ink"
+            className={`${inputClass} tabular-nums font-mono`}
             required
           />
         </label>
-        <label className="text-sm text-inkFaint sm:col-span-2">
-          รายละเอียด
+        <label className="sm:col-span-2">
+          <span className={labelClass}>รายละเอียด</span>
           <input
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="mt-1 w-full rounded border border-paperLine px-2 py-1 text-ink"
+            className={inputClass}
             required
             maxLength={500}
           />
         </label>
-        <label className="text-sm text-inkFaint">
-          หมวดหมู่ (ถ้ามี)
+        <label>
+          <span className={labelClass}>หมวดหมู่ (ถ้ามี)</span>
           <input
             type="text"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="mt-1 w-full rounded border border-paperLine px-2 py-1 text-ink"
+            className={inputClass}
             maxLength={100}
           />
         </label>
       </div>
-      <button
-        type="submit"
-        disabled={saving}
-        className="mt-3 rounded-full bg-jade px-4 py-1.5 text-sm text-white disabled:opacity-50"
-      >
-        {saving ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
-      </button>
+      <div className="mt-3 flex justify-end">
+        <button type="submit" disabled={saving} className={primaryButtonClass}>
+          {saving ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
+        </button>
+      </div>
     </form>
   );
 }
@@ -318,11 +319,8 @@ function CancelSection({
 
   if (!showForm) {
     return (
-      <div className="mt-3 border-t border-paperLine pt-3">
-        <button
-          onClick={() => setShowForm(true)}
-          className="rounded-full border border-rust px-3 py-1 text-xs text-rust hover:bg-rustSoft"
-        >
+      <div className="mt-3 border-t border-outline-variant/40 pt-3">
+        <button type="button" onClick={() => setShowForm(true)} className={dangerButtonClass}>
           ยกเลิกรายการ
         </button>
       </div>
@@ -330,35 +328,26 @@ function CancelSection({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-3 border-t border-paperLine pt-3">
-      <h4 className="mb-2 text-sm font-semibold text-ink">ยกเลิกรายการนี้</h4>
-      {error && <p className="mb-2 text-sm text-rust">{error}</p>}
-      <label className="mb-2 block text-sm text-inkFaint">
-        เหตุผลที่ยกเลิก (จำเป็นต้องระบุ)
+    <form onSubmit={handleSubmit} className="mt-3 border-t border-outline-variant/40 pt-3">
+      <h4 className="mb-2 text-label-md text-on-surface">ยกเลิกรายการนี้</h4>
+      {error && <p className={`${alertClasses.error} mb-2`}>{error}</p>}
+      <label className="mb-2 block">
+        <span className={labelClass}>เหตุผลที่ยกเลิก (จำเป็นต้องระบุ)</span>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           required
           maxLength={500}
           rows={2}
-          className="mt-1 w-full rounded border border-paperLine px-2 py-1 text-ink"
+          className={inputClass}
         />
       </label>
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={cancelling || !reason.trim()}
-          className="rounded-full bg-rust px-4 py-1.5 text-sm text-white disabled:opacity-50"
-        >
-          {cancelling ? "กำลังยกเลิก..." : "ยืนยันการยกเลิก"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowForm(false)}
-          disabled={cancelling}
-          className="rounded-full border border-paperLine px-4 py-1.5 text-sm text-inkFaint disabled:opacity-50"
-        >
+      <div className="flex justify-end gap-3">
+        <button type="button" onClick={() => setShowForm(false)} disabled={cancelling} className={secondaryButtonClass}>
           ปิด
+        </button>
+        <button type="submit" disabled={cancelling || !reason.trim()} className={dangerButtonClass}>
+          {cancelling ? "กำลังยกเลิก..." : "ยืนยันการยกเลิก"}
         </button>
       </div>
     </form>

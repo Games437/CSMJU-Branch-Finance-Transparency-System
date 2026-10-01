@@ -17,6 +17,10 @@ import {
   type YearAccountSummary,
 } from "@/lib/api";
 import { TransactionRow } from "@/components/TransactionRow";
+import { PageHeader } from "@/components/csmju/PageHeader";
+import { EmptyState } from "@/components/csmju/EmptyState";
+import { SkeletonRows, SkeletonCard } from "@/components/csmju/Skeleton";
+import { alertClasses, cardClass, inputClass, labelClass, secondaryButtonClass } from "@/components/csmju/ui";
 
 // ============================================================================
 // "Year Account Detail": balance summary + transaction table + filters +
@@ -49,8 +53,8 @@ const thb = new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" 
 
 export default function YearAccountsPage() {
   const { externalUserId, role } = useDevAuth();
-
   const [me, setMe] = useState<MeResponse | null>(null);
+
   const [allYearAccounts, setAllYearAccounts] = useState<YearAccountListItem[]>([]);
   const [selectedYearAccountId, setSelectedYearAccountId] = useState<string | null>(null);
   const [summary, setSummary] = useState<YearAccountSummary | null>(null);
@@ -73,7 +77,8 @@ export default function YearAccountsPage() {
     return allYearAccounts;
   }, [allYearAccounts, me, role]);
 
-  // Initial load: who am I (for Treasurer scoping) + the full year-account list.
+  // Initial load: who-am-I (needed for the TREASURER-own-years filter
+  // below) plus the full year-account list.
   useEffect(() => {
     if (!externalUserId) return;
 
@@ -163,39 +168,36 @@ export default function YearAccountsPage() {
 
   if (!externalUserId) {
     return (
-      <main className="mx-auto max-w-4xl p-6">
-        <p className="text-inkFaint">เลือกผู้ใช้งานจากแถบด้านบนเพื่อเข้าสู่ระบบ (dev only)</p>
-      </main>
+      <EmptyState title="เลือกผู้ใช้งานจากเมนูด้านข้างเพื่อเข้าสู่ระบบ" description="(dev only)" />
     );
   }
 
   const totalPages = transactionList ? Math.max(1, Math.ceil(transactionList.total / PAGE_SIZE)) : 1;
+  const hasFilters = typeFilter !== "ALL" || statusFilter !== "ALL";
 
   return (
-    <main className="mx-auto max-w-4xl p-6">
-      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">รายละเอียดบัญชีชั้นปี</h1>
-      <p className="mb-6 text-sm text-inkFaint">ยอดคงเหลือ รายการธุรกรรม และหลักฐานประกอบของแต่ละชั้นปี</p>
+    <>
+      <PageHeader title="รายละเอียดบัญชีชั้นปี" description="ยอดคงเหลือ รายการธุรกรรม และหลักฐานประกอบของแต่ละชั้นปี" />
 
-      {error && <div className="mb-6 rounded-passbook border-2 border-rust bg-rustSoft p-4 text-rust">{error}</div>}
+      {error && <div className={alertClasses.error}>{error}</div>}
 
-      {loadingAccounts && <p className="text-inkFaint">กำลังโหลดรายชื่อบัญชี...</p>}
+      {loadingAccounts && <SkeletonCard />}
 
       {!loadingAccounts && availableYearAccounts.length === 0 && (
-        <p className="rounded-passbook border-2 border-brass bg-brassSoft p-4 text-brass">
-          {role === "TREASURER"
-            ? "บัญชีนี้ยังไม่ได้รับมอบหมายให้ดูแลชั้นปีใด — ติดต่อหัวหน้าสาขา"
-            : "ยังไม่มีบัญชีชั้นปีในระบบ"}
-        </p>
+        <EmptyState
+          title={role === "TREASURER" ? "บัญชีนี้ยังไม่ได้รับมอบหมายให้ดูแลชั้นปีใด" : "ยังไม่มีบัญชีชั้นปีในระบบ"}
+          description={role === "TREASURER" ? "ติดต่อหัวหน้าสาขา" : undefined}
+        />
       )}
 
       {availableYearAccounts.length > 0 && (
         <>
-          <label className="mb-4 block text-sm text-inkFaint">
-            เลือกชั้นปี
+          <label className="block">
+            <span className={labelClass}>เลือกชั้นปี</span>
             <select
               value={selectedYearAccountId ?? ""}
               onChange={(e) => setSelectedYearAccountId(e.target.value)}
-              className="mt-1 block w-full rounded border border-paperLine bg-white px-2 py-1.5 text-ink sm:w-auto"
+              className={`${inputClass} sm:w-auto`}
             >
               {availableYearAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -206,44 +208,46 @@ export default function YearAccountsPage() {
           </label>
 
           {summary && (
-            <section className="mb-6 rounded-passbook border-2 border-paperLine bg-white p-5 shadow-sm">
-              <p className="font-mono text-3xl font-semibold text-ink">{thb.format(summary.balance)}</p>
-              <p className="mb-3 text-xs text-inkFaint">ยอดคงเหลือ (อนุมัติแล้ว)</p>
+            <section className={`${cardClass} p-5`}>
+              <p className="tabular-nums font-display text-display-lg text-on-surface">
+                {thb.format(summary.balance)}
+              </p>
+              <p className="mb-3 text-caption text-on-surface-variant">ยอดคงเหลือ (อนุมัติแล้ว)</p>
 
               {summary.pendingExpenseTotal > 0 && (
-                <p className="mb-3 rounded-full bg-brassSoft px-3 py-1 text-xs text-brass">
+                <p className="mb-3 rounded-full bg-brand-amber/10 px-3 py-1 text-label-sm text-amber-700">
                   มีคำขอเบิกรออนุมัติรวม {thb.format(summary.pendingExpenseTotal)} (ยังไม่หักจากยอดนี้)
                 </p>
               )}
 
-              <dl className="grid grid-cols-2 gap-2 border-t border-paperLine pt-3 text-sm sm:grid-cols-4">
+              <dl className="grid grid-cols-2 gap-3 border-t border-outline-variant/40 pt-3 text-body-md sm:grid-cols-4">
                 <div>
-                  <dt className="text-inkFaint">ยอดยกมา</dt>
-                  <dd className="font-mono text-ink">{thb.format(summary.openingBalance)}</dd>
+                  <dt className="text-caption text-on-surface-variant">ยอดยกมา</dt>
+                  <dd className="tabular-nums text-on-surface">{thb.format(summary.openingBalance)}</dd>
                 </div>
                 <div>
-                  <dt className="text-inkFaint">เงินเข้า (อนุมัติแล้ว)</dt>
-                  <dd className="font-mono text-jade">{thb.format(summary.approvedIncome)}</dd>
+                  <dt className="text-caption text-on-surface-variant">เงินเข้า (อนุมัติแล้ว)</dt>
+                  <dd className="tabular-nums text-emerald-700">{thb.format(summary.approvedIncome)}</dd>
                 </div>
                 <div>
-                  <dt className="text-inkFaint">เงินออก (อนุมัติแล้ว)</dt>
-                  <dd className="font-mono text-rust">{thb.format(summary.approvedExpense)}</dd>
+                  <dt className="text-caption text-on-surface-variant">เงินออก (อนุมัติแล้ว)</dt>
+                  <dd className="tabular-nums text-error">{thb.format(summary.approvedExpense)}</dd>
                 </div>
                 <div>
-                  <dt className="text-inkFaint">สกุลเงิน</dt>
-                  <dd className="font-mono text-ink">{summary.currency}</dd>
+                  <dt className="text-caption text-on-surface-variant">สกุลเงิน</dt>
+                  <dd className="tabular-nums text-on-surface">{summary.currency}</dd>
                 </div>
               </dl>
             </section>
           )}
 
-          <div className="mb-4 flex flex-wrap gap-3">
-            <label className="text-sm text-inkFaint">
-              ประเภท
+          <div className="flex flex-wrap gap-4">
+            <label>
+              <span className={labelClass}>ประเภท</span>
               <select
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value as TransactionType | "ALL")}
-                className="ml-2 rounded border border-paperLine bg-white px-2 py-1 text-ink"
+                className={`${inputClass} w-auto`}
               >
                 <option value="ALL">ทั้งหมด</option>
                 <option value="INCOME">รายรับ</option>
@@ -251,12 +255,12 @@ export default function YearAccountsPage() {
                 <option value="ADJUSTMENT">รายการปรับปรุง</option>
               </select>
             </label>
-            <label className="text-sm text-inkFaint">
-              สถานะ
+            <label>
+              <span className={labelClass}>สถานะ</span>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as TransactionStatus | "ALL")}
-                className="ml-2 rounded border border-paperLine bg-white px-2 py-1 text-ink"
+                className={`${inputClass} w-auto`}
               >
                 <option value="ALL">ทั้งหมด</option>
                 <option value="PENDING">รออนุมัติ</option>
@@ -269,20 +273,23 @@ export default function YearAccountsPage() {
             </label>
           </div>
 
-          {loadingDetail && <p className="text-inkFaint">กำลังโหลดรายการ...</p>}
+          {loadingDetail && <SkeletonRows count={5} />}
 
           {!loadingDetail && transactionList && (
             <>
               <div className="space-y-3">
                 {transactionList.items.length === 0 ? (
-                  <p className="text-inkFaint">ไม่พบรายการตามเงื่อนไขที่เลือก</p>
+                  <EmptyState
+                    title={hasFilters ? "ไม่พบรายการตามเงื่อนไขที่เลือก" : "ยังไม่มีรายการธุรกรรม"}
+                    description={hasFilters ? "ลองเปลี่ยนตัวกรองด้านบน" : undefined}
+                  />
                 ) : (
                   transactionList.items.map((t: Transaction) => (
                     <TransactionRow
                       key={t.id}
                       transaction={t}
-                      externalUserId={externalUserId}
                       currentUserId={me?.id}
+                      externalUserId={externalUserId}
                       role={role ?? undefined}
                     />
                   ))
@@ -290,21 +297,21 @@ export default function YearAccountsPage() {
               </div>
 
               {transactionList.total > PAGE_SIZE && (
-                <div className="mt-4 flex items-center justify-between text-sm text-inkFaint">
+                <div className="flex items-center justify-between text-body-md text-on-surface-variant">
                   <button
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page <= 1}
-                    className="rounded-full border border-paperLine px-3 py-1 disabled:opacity-40"
+                    className={secondaryButtonClass}
                   >
                     ก่อนหน้า
                   </button>
-                  <span>
+                  <span className="tabular-nums">
                     หน้า {page} / {totalPages} (ทั้งหมด {transactionList.total} รายการ)
                   </span>
                   <button
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={page >= totalPages}
-                    className="rounded-full border border-paperLine px-3 py-1 disabled:opacity-40"
+                    className={secondaryButtonClass}
                   >
                     ถัดไป
                   </button>
@@ -314,6 +321,6 @@ export default function YearAccountsPage() {
           )}
         </>
       )}
-    </main>
+    </>
   );
 }

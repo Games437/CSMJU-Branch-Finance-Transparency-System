@@ -5,6 +5,10 @@ import { useDevAuth } from "@/lib/dev-auth";
 import { ApiError, getMe, listTransactions, type MeResponse, type Transaction } from "@/lib/api";
 import { CreateExpenseForm } from "@/components/CreateExpenseForm";
 import { ExpenseRow } from "@/components/ExpenseRow";
+import { PageHeader } from "@/components/csmju/PageHeader";
+import { EmptyState } from "@/components/csmju/EmptyState";
+import { SkeletonRows } from "@/components/csmju/Skeleton";
+import { alertClasses } from "@/components/csmju/ui";
 
 export default function ExpensesPage() {
   const { externalUserId, role } = useDevAuth();
@@ -68,62 +72,59 @@ export default function ExpensesPage() {
 
   if (!externalUserId) {
     return (
-      <main className="mx-auto max-w-3xl p-6">
-        <p className="text-inkFaint">เลือกผู้ใช้งานจากแถบด้านบนเพื่อเข้าสู่ระบบ (dev only)</p>
-      </main>
+      <EmptyState title="เลือกผู้ใช้งานจากเมนูด้านข้างเพื่อเข้าสู่ระบบ" description="(dev only)" />
     );
   }
 
   if (role !== "TREASURER") {
     return (
-      <main className="mx-auto max-w-3xl p-6">
-        <p className="text-inkFaint">
-          หน้านี้สำหรับเหรัญญิกเท่านั้น (ผู้ใช้ปัจจุบันมีบทบาท {role ?? "ไม่ทราบ"})
-        </p>
-      </main>
+      <EmptyState
+        title="หน้านี้สำหรับเหรัญญิกเท่านั้น"
+        description={`ผู้ใช้ปัจจุบันมีบทบาท ${role ?? "ไม่ทราบ"}`}
+      />
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">รายการเบิกจ่าย</h1>
-      {me && (
-        <p className="mb-6 text-sm text-inkFaint">
-          {me.activeYearAssignments[0]?.yearAccount.name ?? "ยังไม่ได้รับมอบหมายชั้นปี"}
-        </p>
-      )}
+    <>
+      <PageHeader
+        title="รายการเบิกจ่าย"
+        description={me?.activeYearAssignments[0]?.yearAccount.name ?? "ยังไม่ได้รับมอบหมายชั้นปี"}
+      />
 
-      {error && (
-        <div className="mb-6 rounded-passbook border-2 border-rust bg-rustSoft p-4 text-rust">{error}</div>
-      )}
+      {error && <div className={alertClasses.error}>{error}</div>}
 
-      {loading && !me && <p className="text-inkFaint">กำลังโหลด...</p>}
+      {loading && !me && <SkeletonRows count={3} />}
 
       {yearAccountId && (
         <CreateExpenseForm externalUserId={externalUserId} yearAccountId={yearAccountId} onCreated={handleCreated} />
       )}
 
       {!loading && me && !yearAccountId && (
-        <p className="mb-6 rounded-passbook border-2 border-brass bg-brassSoft p-4 text-brass">
+        <div className={alertClasses.warning}>
           บัญชีนี้ยังไม่ได้รับมอบหมายให้ดูแลชั้นปีใด — ติดต่อหัวหน้าสาขา
-        </p>
+        </div>
       )}
 
-      <div className="space-y-3">
-        {transactions.length === 0 && !loading ? (
-          <p className="text-inkFaint">ยังไม่มีรายการเบิกจ่าย</p>
-        ) : (
-          transactions.map((t) => (
-            <ExpenseRow
-              key={t.id}
-              transaction={t}
-              externalUserId={externalUserId}
-              currentUserId={me?.id ?? ""}
-              onUpdated={handleUpdated}
-            />
-          ))
-        )}
-      </div>
-    </main>
+      {loading && me ? (
+        <SkeletonRows count={3} />
+      ) : (
+        <div className="space-y-3">
+          {transactions.length === 0 ? (
+            <EmptyState title="ยังไม่มีรายการเบิกจ่าย" description="สร้างรายการแรกได้จากแบบฟอร์มด้านบน" />
+          ) : (
+            transactions.map((t) => (
+              <ExpenseRow
+                key={t.id}
+                transaction={t}
+                externalUserId={externalUserId}
+                currentUserId={me?.id ?? ""}
+                onUpdated={handleUpdated}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </>
   );
 }

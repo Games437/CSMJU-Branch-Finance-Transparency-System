@@ -19,9 +19,14 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// AMENDED 2026-09-27 (tech-stack.md v1.1, Prisma 7.9.1 driver-adapter bump):
+// Prisma 7 no longer allows `url` in this block — the connection string
+// moves to prisma.config.ts (for Migrate/Studio/db push) and to the
+// PrismaPg driver adapter passed into `new PrismaClient({ adapter })` in
+// application code (see backend/src/prisma/prisma.service.ts). See
+// https://pris.ly/d/config-datasource and https://pris.ly/d/prisma7-client-config.
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ----------------------------------------------------------------------------
@@ -138,6 +143,15 @@ model User {
   uploadedEvidence  ExpenseEvidence[]
   approvalActions   ApprovalAction[]
   auditLogs         AuditLog[]
+  // DD-03 (check-snake-case.sh) false-positive, documented rather than
+  // "fixed": this is a pure back-relation (the physical FK/column lives
+  // on LineAccountLink.ownerId below), so it has no DB column of its own
+  // and Prisma does not allow @map on a relation field — adding one would
+  // fail `prisma validate`. The checker's awk logic only recognizes a
+  // field as a relation if it has an inline @relation(...) or a `[]`
+  // suffix on the type; a nullable singular back-relation like `Foo?`
+  // slips past both checks. Flagged to PL as a script bug rather than
+  // worked around here (see compliance gap report, section 7).
   lineAccountLink   LineAccountLink?
   lineLinkCodes     LineLinkCode[]
 
@@ -156,7 +170,7 @@ model User {
 // re-modeling later if that assumption turns out to be wrong.
 model UserYearAssignment {
   id            String  @id @default(uuid()) @db.Uuid
-  userId        String  @map("user_id") @db.Uuid
+  assigneeId    String  @map("assignee_id") @db.Uuid
   yearAccountId String  @map("year_account_id") @db.Uuid
   role          Role
   activeFrom    DateTime @default(now()) @map("active_from")
@@ -167,13 +181,24 @@ model UserYearAssignment {
   // denormalized username alongside its UUID FK. ADDITIVE, not a
   // replacement — confirmed with the user as the low-risk path instead of
   // the doc's other, "highest risk" option (drop users.id/display_name,
-  // convert every FK to a username-only key). userId stays the FK of
+  // convert every FK to a username-only key). assigneeId stays the FK of
   // record; username is a read-side convenience populated at write time
   // from the acting user's externalUserId (see service call sites), never
   // used for joins or lookups.
+  //
+  // AMENDED 2026-09-27 ("ยึด repo กลาง", DD-01): this local FK was renamed
+  // to assigneeId — see migration 20260927170000_dd01_rename_local_user_fk_aliases
+  // for the exact before/after column name. The forbidden-alias list in
+  // data-dictionary.md §9.2 reserves that earlier name exclusively for
+  // the Core Hub `sub` claim (-> core_user_id/coreUserId elsewhere in
+  // this codebase); this field never held that value — it is a local FK
+  // to this table's own User row — so it needed a different, non-aliased
+  // name. assigneeId follows this codebase's existing convention for
+  // User-pointing FKs that aren't the core identity (actorId, createdBy,
+  // approvedBy, uploadedBy).
   username      String  @map("username")
 
-  user        User        @relation(fields: [userId], references: [id])
+  assignee    User        @relation(fields: [assigneeId], references: [id])
   yearAccount YearAccount @relation(fields: [yearAccountId], references: [id])
 
   @@index([yearAccountId, role])
@@ -480,11 +505,16 @@ model IntegrationEvent {
 model LineAccountLink {
   id         String   @id @default(uuid()) @db.Uuid
   lineUserId String   @unique @map("line_user_id") // LINE's own opaque user id (source.userId in the webhook)
-  userId     String   @unique @map("user_id") @db.Uuid
+  // AMENDED 2026-09-27 ("ยึด repo กลาง", DD-01): this local FK was renamed
+  // to ownerId — see migration 20260927170000_dd01_rename_local_user_fk_aliases
+  // for the exact before/after column name, and UserYearAssignment's
+  // comment above for why (this is a local FK, not the Core Hub sub
+  // claim, so it must not reuse the reserved Global Identity alias).
+  ownerId    String   @unique @map("owner_id") @db.Uuid
   username   String   @map("username") // denormalized, base standards item #6 pattern
   linkedAt   DateTime @default(now()) @map("linked_at")
 
-  user User @relation(fields: [userId], references: [id])
+  owner User @relation(fields: [ownerId], references: [id])
 
   @@map("line_account_links")
 }
@@ -500,13 +530,16 @@ model LineAccountLink {
 model LineLinkCode {
   id        String    @id @default(uuid()) @db.Uuid
   code      String    @unique
-  userId    String    @map("user_id") @db.Uuid
+  // AMENDED 2026-09-27 ("ยึด repo กลาง", DD-01): this local FK was renamed
+  // to ownerId, same reasoning and same migration as LineAccountLink.ownerId
+  // above.
+  ownerId   String    @map("owner_id") @db.Uuid
   username  String    @map("username")
   expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at") // null = still usable (subject to expiresAt)
   createdAt DateTime  @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id])
+  owner User @relation(fields: [ownerId], references: [id])
 
   @@map("line_link_codes")
 }

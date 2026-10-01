@@ -9,8 +9,14 @@
  * unexpectedly, or fail to throw where noted, the schema has regressed.
  */
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
-const prisma = new PrismaClient();
+// AMENDED 2026-09-27 (tech-stack.md v1.1, Prisma 7.9.1 driver-adapter bump):
+// this script is a standalone process (not run through PrismaService's DI),
+// so it needs its own driver adapter, same as src/prisma/prisma.service.ts.
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+});
 
 async function main() {
   const year2 = await prisma.yearAccount.create({
@@ -47,8 +53,10 @@ async function main() {
     data: { externalUserId: "s1", displayName: "Student One", role: "STUDENT" },
   });
 
+  // AMENDED 2026-09-27 ("ยึด repo กลาง", DD-01): UserYearAssignment's FK
+  // field is now assigneeId throughout this file (see schema.prisma's comment).
   await prisma.userYearAssignment.create({
-    data: { userId: treasurerA.id, username: treasurerA.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
+    data: { assigneeId: treasurerA.id, username: treasurerA.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
   });
 
   console.log("✅ Seeded base year account + 4 users + 1 active treasurer assignment");
@@ -76,7 +84,7 @@ async function main() {
   // --- Scenario 2: a second ACTIVE treasurer on the same year must be rejected ---
   try {
     await prisma.userYearAssignment.create({
-      data: { userId: treasurerB.id, username: treasurerB.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
+      data: { assigneeId: treasurerB.id, username: treasurerB.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
     });
     console.error("❌ FAIL: two active treasurers on the same year were both accepted");
   } catch {
@@ -85,11 +93,11 @@ async function main() {
 
   // --- Scenario 3: replacing the treasurer (close old, open new) must succeed ---
   await prisma.userYearAssignment.updateMany({
-    where: { userId: treasurerA.id, yearAccountId: year2.id, activeTo: null },
+    where: { assigneeId: treasurerA.id, yearAccountId: year2.id, activeTo: null },
     data: { activeTo: new Date() },
   });
   await prisma.userYearAssignment.create({
-    data: { userId: treasurerB.id, username: treasurerB.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
+    data: { assigneeId: treasurerB.id, username: treasurerB.externalUserId, yearAccountId: year2.id, role: "TREASURER" },
   });
   console.log("✅ PASS: treasurer handover (close old + open new) succeeded");
 

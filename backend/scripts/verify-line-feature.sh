@@ -235,10 +235,11 @@ UPLOAD_OK=$(echo "$UPLOAD_RESP" | jq -r '.success')
 check "web upload to an INCOME transaction succeeds (was a 409 before this fix)" "true" "$UPLOAD_OK"
 
 EVIDENCE_LIST=$(curl -s -H "x-external-user-id: t2" "$BASE/expenses/$INCOME2_TXN_ID/evidence")
-# Wire format is snake_case (ResponseEnvelopeInterceptor's transform),
-# not the camelCase the Prisma/TS layer uses internally.
-EVIDENCE_CURRENT=$(echo "$EVIDENCE_LIST" | jq -r '.data[0].is_current')
-EVIDENCE_MIME=$(echo "$EVIDENCE_LIST" | jq -r '.data[0].mime_type')
+# AMENDED 2026-09-27 ("ยึด repo กลาง"): wire format is camelCase now, not
+# snake_case — the real api-conventions.md (v1.1) §6/§9 requires camelCase
+# JSON, so ResponseEnvelopeInterceptor's snake_case transform was removed.
+EVIDENCE_CURRENT=$(echo "$EVIDENCE_LIST" | jq -r '.data[0].isCurrent')
+EVIDENCE_MIME=$(echo "$EVIDENCE_LIST" | jq -r '.data[0].mimeType')
 check "evidence row is current" "true" "$EVIDENCE_CURRENT"
 check "evidence row has the right MIME type" "application/pdf" "$EVIDENCE_MIME"
 
@@ -266,6 +267,82 @@ echo "== Test I: unlink endpoint, then link-status is false again =="
 curl -s -H "x-external-user-id: t2" -X DELETE "$BASE/line/link" > /dev/null
 STATUS_UNLINKED=$(curl -s -H "x-external-user-id: t2" "$BASE/line/link-status" | jq -r '.data.linked')
 check "unlinked" "false" "$STATUS_UNLINKED"
+
+# ============================================================================
+# 2026-09-27 ("ยึด repo กลาง" — csmju2030-standards adopted as authoritative,
+# replacing an older draft doc this project used to follow). Tests Q-U below
+# cover the resulting batch of fixes (compliance gap report items 1-7, 9):
+# camelCase envelope, request+response pagination (?limit=, not ?pageSize=
+# or ?per_page=), validation errors now 400 (not 422), health endpoint at
+# GET /api/health with the new response shape, and DD-01's userId -> DB-
+# reserved-alias rename (assigneeId/ownerId) actually round-tripping through
+# real Postgres rows rather than just type-checking.
+# ============================================================================
+
+echo ""
+echo "== Test Q: health check is at GET /api/health, wrapped in the normal envelope =="
+HEALTH_RESP=$(curl -s -o /tmp/health_resp.json -w "%{http_code}" "http://localhost:3000/api/health")
+check "health endpoint returns 200" "200" "$HEALTH_RESP"
+HEALTH_SUCCESS=$(jq -r '.success' /tmp/health_resp.json)
+HEALTH_STATUS=$(jq -r '.data.status' /tmp/health_resp.json)
+HEALTH_SERVICE=$(jq -r '.data.service' /tmp/health_resp.json)
+check "health is wrapped in the envelope (success:true)" "true" "$HEALTH_SUCCESS"
+check "health data.status is ok" "ok" "$HEALTH_STATUS"
+check "health data.service is non-empty (PLACEHOLDER pending PL's slug)" "csmju-bfts" "$HEALTH_SERVICE"
+# The old draft's bare (unversioned, unwrapped) /health must be gone.
+OLD_HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/health")
+check "old bare /health path no longer exists" "404" "$OLD_HEALTH_STATUS"
+
+echo ""
+echo "== Test R: validation failure is 400/VALIDATION_ERROR, not 422 =="
+BAD_EXPENSE_RESP=$(curl -s -o /tmp/bad_expense_resp.json -w "%{http_code}" -X POST \
+  -H "x-external-user-id: t2" -H "Content-Type: application/json" \
+  "$BASE/expenses" -d "{\"yearAccountId\":\"$(psql "postgresql://bfts:bfts_dev_password@localhost:5432/bfts_dev" -t -A -c "SELECT id FROM year_accounts LIMIT 1;")\",\"amount\":-50,\"transactionDate\":\"2026-09-01\",\"description\":\"t\"}")
+check "negative amount is rejected with 400 (not 422)" "400" "$BAD_EXPENSE_RESP"
+BAD_EXPENSE_CODE=$(jq -r '.error.code' /tmp/bad_expense_resp.json)
+check "error code is VALIDATION_ERROR" "VALIDATION_ERROR" "$BAD_EXPENSE_CODE"
+
+echo ""
+echo "== Test S: pagination — request side uses ?limit= (not ?pageSize= or ?per_page=), response meta matches api-conventions.md exactly =="
+PAGE_RESP=$(curl -s -H "x-external-user-id: bh1" "$BASE/transactions?page=1&limit=1")
+PAGE_DATA_COUNT=$(echo "$PAGE_RESP" | jq '.data | length')
+check "?limit=1 actually limits data to 1 row (was silently ignored before this fix)" "1" "$PAGE_DATA_COUNT"
+PAGE_META_KEYS=$(echo "$PAGE_RESP" | jq -r '.meta | keys | sort | join(",")')
+check "meta has exactly {limit,page,total,totalPages} (camelCase, no per_page)" "limit,page,total,totalPages" "$PAGE_META_KEYS"
+# Ignoring ?limit= would silently fall back to the old default of 20 —
+# assert the actual returned limit field is 1, not 20, to catch that case.
+PAGE_META_LIMIT=$(echo "$PAGE_RESP" | jq -r '.meta.limit')
+check "meta.limit reflects the requested value" "1" "$PAGE_META_LIMIT"
+
+echo ""
+echo "== Test T: response JSON keys are camelCase end to end (createdByUsername, not created_by_username) =="
+ONE_TXN_KEYS=$(curl -s -H "x-external-user-id: bh1" "$BASE/transactions?page=1&limit=1" | jq -r '.data[0] | keys | join(",")')
+check "createdByUsername key present (camelCase)" "true" "$(echo "$ONE_TXN_KEYS" | grep -qw 'createdByUsername' && echo true || echo false)"
+check "no snake_case created_by_username leaked" "false" "$(echo "$ONE_TXN_KEYS" | grep -qw 'created_by_username' && echo true || echo false)"
+
+echo ""
+echo "== Test U: DD-01 rename — assigneeId/ownerId actually round-trip through real Postgres rows =="
+# UserYearAssignment.userId -> assigneeId: /me/permissions and /me both
+# depend on getActiveYearAccountIds()/getActiveYearAssignments(), which
+# now query assigneeId internally — t2's active assignment must still
+# resolve correctly after the rename (proven already by Test S/E-F above
+# creating LINE_REPORT transactions scoped to t2's active year, but this
+# checks it directly against the renamed column).
+ASSIGNEE_COL_EXISTS=$(psql "postgresql://bfts:bfts_dev_password@localhost:5432/bfts_dev" -t -A -c \
+  "SELECT count(*) FROM information_schema.columns WHERE table_name='user_year_assignments' AND column_name='assignee_id';")
+check "user_year_assignments.assignee_id column exists" "1" "$ASSIGNEE_COL_EXISTS"
+OLD_USERID_COL_GONE=$(psql "postgresql://bfts:bfts_dev_password@localhost:5432/bfts_dev" -t -A -c \
+  "SELECT count(*) FROM information_schema.columns WHERE table_name='user_year_assignments' AND column_name='user_id';")
+check "user_year_assignments.user_id (old name) is gone" "0" "$OLD_USERID_COL_GONE"
+OWNER_COL_EXISTS=$(psql "postgresql://bfts:bfts_dev_password@localhost:5432/bfts_dev" -t -A -c \
+  "SELECT count(*) FROM information_schema.columns WHERE table_name IN ('line_account_links','line_link_codes') AND column_name='owner_id';")
+check "line_account_links.owner_id and line_link_codes.owner_id both exist" "2" "$OWNER_COL_EXISTS"
+# The LINE flow (Test C onward) already exercised owner_id end to end via
+# real HTTP + real Postgres rows; this just confirms the FK still points
+# at the right user after all of this test script's activity.
+FINAL_ASSIGNEE_CHECK=$(psql "postgresql://bfts:bfts_dev_password@localhost:5432/bfts_dev" -t -A -c \
+  "SELECT u.external_user_id FROM user_year_assignments uya JOIN users u ON u.id = uya.assignee_id WHERE uya.active_to IS NULL LIMIT 1;")
+check "active treasurer assignment resolves through assignee_id FK" "t2" "$FINAL_ASSIGNEE_CHECK"
 
 echo ""
 echo "=================================================="

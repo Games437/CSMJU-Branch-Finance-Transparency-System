@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ApiError, getTransactionAuditTrail, type AuditLogEntry } from "@/lib/api";
+import { cardClass, secondaryButtonClass } from "@/components/csmju/ui";
 
 // ============================================================================
 // One row of the Branch Head Audit Log Viewer
@@ -13,8 +14,8 @@ import { ApiError, getTransactionAuditTrail, type AuditLogEntry } from "@/lib/ap
 // after a transaction succeeds, never on a denied/failed attempt; grep
 // confirms no failure-path call sites exist yet). So "Result" here is
 // derived from the action name itself (approved/confirmed/created vs.
-// rejected/voided), the same jade/rust color convention used everywhere
-// else in this app for status — not invented pass/fail data.
+// rejected/voided), the same success/error color convention used
+// everywhere else in this app for status — not invented pass/fail data.
 // ============================================================================
 
 const dateTimeFmt = new Intl.DateTimeFormat("th-TH", {
@@ -43,9 +44,9 @@ function actionLabel(action: string): string {
 
 function resultBadgeClasses(action: string): string {
   if (action === "TRANSACTION_REJECTED" || action === "VOID_TRANSACTION" || action === "EXPENSE_CANCELLED") {
-    return "bg-rustSoft text-rust";
+    return "bg-error-container text-on-error-container";
   }
-  return "bg-jadeSoft text-jade";
+  return "bg-success/10 text-emerald-700";
 }
 
 function resultLabel(action: string): string {
@@ -57,36 +58,42 @@ function resultLabel(action: string): string {
 
 interface Props {
   entry: AuditLogEntry;
-  externalUserId: string;
+  externalUserId: string | null;
 }
 
 export function AuditLogRow({ entry, externalUserId }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const isSuccessTone = resultBadgeClasses(entry.action).includes("success");
 
   return (
-    <div className="rounded-passbook border-2 border-paperLine bg-white">
+    <div className={cardClass}>
       <button
+        type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="grid w-full grid-cols-1 gap-1 p-4 text-left sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-center sm:gap-3"
+        aria-expanded={expanded}
+        className="grid w-full grid-cols-1 gap-1 p-4 text-left hover:bg-surface/50 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-center sm:gap-3"
       >
         <div>
-          <p className="text-xs text-inkFaint">{dateTimeFmt.format(new Date(entry.createdAt))}</p>
-          <p className="font-medium text-ink">{actionLabel(entry.action)}</p>
+          <p className="text-caption text-on-surface-variant">{dateTimeFmt.format(new Date(entry.createdAt))}</p>
+          <p className="text-body-md font-medium text-on-surface">{actionLabel(entry.action)}</p>
         </div>
-        <div className="text-sm text-inkFaint">
+        <div className="text-body-md text-on-surface-variant">
           ผู้กระทำ: {entry.actor ? `${entry.actor.displayName} (${entry.actor.externalUserId})` : "ระบบ"}
         </div>
-        <div className="text-sm text-inkFaint">
+        <div className="text-body-md text-on-surface-variant">
           {entry.targetType} · {entry.targetId.slice(0, 8)}…
           {entry.yearAccount ? ` · ${entry.yearAccount.name}` : ""}
         </div>
-        <span className={`shrink-0 justify-self-start rounded-full px-2 py-0.5 text-xs font-medium sm:justify-self-end ${resultBadgeClasses(entry.action)}`}>
+        <span
+          className={`inline-flex shrink-0 items-center gap-1.5 justify-self-start rounded-full px-2.5 py-0.5 text-label-sm sm:justify-self-end ${resultBadgeClasses(entry.action)}`}
+        >
+          {isSuccessTone && <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />}
           {resultLabel(entry.action)}
         </span>
       </button>
 
       {expanded && (
-        <div className="border-t border-paperLine p-4">
+        <div className="border-t border-outline-variant/40 p-4">
           <DetailsDrawer entry={entry} externalUserId={externalUserId} />
         </div>
       )}
@@ -94,7 +101,7 @@ export function AuditLogRow({ entry, externalUserId }: Props) {
   );
 }
 
-function DetailsDrawer({ entry, externalUserId }: { entry: AuditLogEntry; externalUserId: string }) {
+function DetailsDrawer({ entry, externalUserId }: { entry: AuditLogEntry; externalUserId: string | null }) {
   const [trail, setTrail] = useState<AuditLogEntry[] | null>(null);
   const [loadingTrail, setLoadingTrail] = useState(false);
   const [trailError, setTrailError] = useState<string | null>(null);
@@ -113,15 +120,15 @@ function DetailsDrawer({ entry, externalUserId }: { entry: AuditLogEntry; extern
   };
 
   return (
-    <div className="space-y-3 text-sm">
+    <div className="space-y-3 text-body-md">
       <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>
-          <dt className="text-xs text-inkFaint">IP Address</dt>
-          <dd className="font-mono text-ink">{entry.ipAddress ?? "—"}</dd>
+          <dt className="text-caption text-on-surface-variant">IP Address</dt>
+          <dd className="font-mono text-on-surface">{entry.ipAddress ?? "—"}</dd>
         </div>
         <div>
-          <dt className="text-xs text-inkFaint">User Agent</dt>
-          <dd className="truncate font-mono text-ink" title={entry.userAgent ?? undefined}>
+          <dt className="text-caption text-on-surface-variant">User Agent</dt>
+          <dd className="truncate font-mono text-on-surface" title={entry.userAgent ?? undefined}>
             {entry.userAgent ?? "—"}
           </dd>
         </div>
@@ -134,25 +141,21 @@ function DetailsDrawer({ entry, externalUserId }: { entry: AuditLogEntry; extern
       {entry.targetType === "Transaction" && (
         <div>
           {trail === null && (
-            <button
-              onClick={loadTrail}
-              disabled={loadingTrail}
-              className="rounded-full border border-jade px-3 py-1 text-xs text-jade hover:bg-jadeSoft disabled:opacity-50"
-            >
+            <button type="button" onClick={loadTrail} disabled={loadingTrail} className={secondaryButtonClass}>
               {loadingTrail ? "กำลังโหลด..." : "ดูประวัติทั้งหมดของรายการนี้"}
             </button>
           )}
-          {trailError && <p className="mt-2 text-xs text-rust">{trailError}</p>}
+          {trailError && <p className="mt-2 text-caption text-error">{trailError}</p>}
           {trail !== null && (
-            <div className="mt-2 space-y-2 border-t border-paperLine pt-2">
-              <p className="text-xs font-semibold text-ink">
+            <div className="mt-2 space-y-2 border-t border-outline-variant/40 pt-2">
+              <p className="text-caption font-semibold text-on-surface">
                 ประวัติทั้งหมดของรายการ ({trail.length} เหตุการณ์)
               </p>
               {trail.map((t) => (
-                <div key={t.id} className="rounded border border-paperLine bg-paper p-2 text-xs">
-                  <span className="text-inkFaint">{dateTimeFmt.format(new Date(t.createdAt))}</span>{" "}
-                  <span className="font-medium text-ink">{actionLabel(t.action)}</span>{" "}
-                  <span className="text-inkFaint">
+                <div key={t.id} className="rounded-lg border border-outline-variant/40 bg-surface-container-low p-2 text-caption">
+                  <span className="text-on-surface-variant">{dateTimeFmt.format(new Date(t.createdAt))}</span>{" "}
+                  <span className="font-medium text-on-surface">{actionLabel(t.action)}</span>{" "}
+                  <span className="text-on-surface-variant">
                     — {t.actor ? `${t.actor.displayName} (${t.actor.externalUserId})` : "ระบบ"}
                   </span>
                 </div>
@@ -169,8 +172,8 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
   if (value === null || value === undefined) return null;
   return (
     <div>
-      <p className="mb-1 text-xs font-semibold text-ink">{label}</p>
-      <pre className="overflow-x-auto rounded bg-paper p-2 font-mono text-xs text-inkFaint">
+      <p className="mb-1 text-caption font-semibold text-on-surface">{label}</p>
+      <pre className="overflow-x-auto rounded-lg bg-surface-container-low p-2 font-mono text-caption text-on-surface-variant">
         {JSON.stringify(value, null, 2)}
       </pre>
     </div>

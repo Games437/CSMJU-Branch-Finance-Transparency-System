@@ -8,7 +8,7 @@ project) over REST.
 
 ```bash
 npm install
-cp .env.local.example .env.local
+cp .env.example .env.local
 npm run dev
 ```
 

@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { useDevAuth } from "@/lib/dev-auth";
 import { ApiError, listPendingApprovals, type PendingApprovalItem } from "@/lib/api";
 import { ApprovalRow } from "@/components/ApprovalRow";
+import { PageHeader } from "@/components/csmju/PageHeader";
+import { EmptyState } from "@/components/csmju/EmptyState";
+import { SkeletonRows } from "@/components/csmju/Skeleton";
+import { alertClasses } from "@/components/csmju/ui";
 
 export default function ApprovalsPage() {
   const { externalUserId, role } = useDevAuth();
@@ -40,51 +44,41 @@ export default function ApprovalsPage() {
 
   if (!externalUserId) {
     return (
-      <main className="mx-auto max-w-3xl p-6">
-        <p className="text-inkFaint">เลือกผู้ใช้งานจากแถบด้านบนเพื่อเข้าสู่ระบบ (dev only)</p>
-      </main>
+      <EmptyState title="เลือกผู้ใช้งานจากเมนูด้านข้างเพื่อเข้าสู่ระบบ" description="(dev only)" />
     );
   }
 
   if (role !== "BRANCH_HEAD") {
     return (
-      <main className="mx-auto max-w-3xl p-6">
-        <p className="text-inkFaint">
-          หน้านี้สำหรับหัวหน้าสาขาเท่านั้น (ผู้ใช้ปัจจุบันมีบทบาท {role ?? "ไม่ทราบ"})
-        </p>
-      </main>
+      <EmptyState
+        title="หน้านี้สำหรับหัวหน้าสาขาเท่านั้น"
+        description={`ผู้ใช้ปัจจุบันมีบทบาท ${role ?? "ไม่ทราบ"}`}
+      />
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">รายการรออนุมัติ</h1>
-      <p className="mb-6 text-sm text-inkFaint">
-        รายการเบิกจ่ายที่รออนุมัติ และรายรับจากธนาคารที่รอยืนยัน
-      </p>
+    <>
+      <PageHeader
+        title="รายการรออนุมัติ"
+        description="รายการเบิกจ่ายที่รออนุมัติ และรายรับจากธนาคารที่รอยืนยัน"
+      />
 
-      {error && (
-        <div className="mb-6 rounded-passbook border-2 border-rust bg-rustSoft p-4 text-rust">{error}</div>
-      )}
+      {error && <div className={alertClasses.error}>{error}</div>}
 
-      {loading && <p className="text-inkFaint">กำลังโหลด...</p>}
-
-      {!loading && (
+      {loading ? (
+        <SkeletonRows count={4} />
+      ) : (
         <div className="space-y-3">
           {items.length === 0 ? (
-            <p className="text-inkFaint">ไม่มีรายการรออนุมัติในขณะนี้</p>
+            <EmptyState title="ไม่มีรายการรออนุมัติในขณะนี้" description="รายการใหม่จะปรากฏที่นี่เมื่อมีการส่งคำขอ" />
           ) : (
             items.map((item) => (
-              <ApprovalRow
-                key={item.id}
-                item={item}
-                externalUserId={externalUserId}
-                onResolved={handleResolved}
-              />
+              <ApprovalRow key={item.id} item={item} externalUserId={externalUserId} onResolved={handleResolved} />
             ))
           )}
         </div>
       )}
-    </main>
+    </>
   );
 }

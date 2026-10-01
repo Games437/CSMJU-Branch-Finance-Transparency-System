@@ -1,36 +1,26 @@
 import { Controller, Get } from '@nestjs/common';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { SkipEnvelope } from '../common/skip-envelope.decorator';
+import { SUBSYSTEM_SLUG } from '../common/constants/subsystem';
 
-// Read once at module load, not per-request — package.json won't change
-// while the process is running, so re-reading it on every health check
-// call would be pointless I/O on what's meant to be a cheap,
-// high-frequency monitoring endpoint.
-const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as {
-  version: string;
-};
-
-/**
- * GET /health — base item #1 / api-conventions.md Section 8.
- *
- * Deliberately NOT under /api/v1 (health checks are infrastructure
- * plumbing, not a versioned business resource — api-conventions.md's
- * own public_endpoints example lists "GET /health" with no prefix) and
- * NOT behind AuthGuard/RbacGuard ("ไม่ต้องแนบ token"). No @UseGuards()
- * at all here — simplest way to guarantee this route bypasses auth
- * entirely, rather than relying on a bypass flag that could be
- * misconfigured later.
- *
- * Response is NOT wrapped in the {success, data, meta} envelope
- * (base item #3/#6) — api-conventions.md Section 8 shows this exact
- * bare {status, version} shape as the standard for this one endpoint.
- */
-@Controller('health')
+// AMENDED 2026-09-27 (team decision: "ยึด repo กลาง" — the real
+// csmju2030-standards repo replaces an older draft doc this project used
+// to follow). Two things changed from the previous version of this file:
+//
+// 1. Path: the real api-conventions.md §1/§8 puts health at GET
+//    /api/health specifically (not bare /health — that was the old
+//    draft's convention). It's still outside /api/v1 (infrastructure
+//    plumbing, not a versioned business resource — the real doc lists
+//    it as one of exactly two paths outside /api/v1/, the other being
+//    /auth/callback), so main.ts excludes 'api/health' from the global
+//    v1 prefix, and this controller's own path is the full 'api/health'.
+// 2. Response shape: the real api-conventions.md §8 wraps this in the
+//    normal { success, data: { status, service } } envelope — unlike
+//    the old draft, which wanted a bare unwrapped { status, version }.
+//    @SkipEnvelope() is removed so this goes through the same
+//    ResponseEnvelopeInterceptor as every other endpoint.
+@Controller('api/health')
 export class HealthController {
   @Get()
-  @SkipEnvelope()
   check() {
-    return { status: 'ok', version: packageJson.version };
+    return { status: 'ok', service: SUBSYSTEM_SLUG };
   }
 }

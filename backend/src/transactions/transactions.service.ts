@@ -77,19 +77,19 @@ export class TransactionsService {
       where.yearAccountId = query.yearAccountId;
     }
 
-    const skip = (query.page - 1) * query.pageSize;
+    const skip = (query.page - 1) * query.limit;
 
     const [items, total] = await Promise.all([
       this.prisma.transaction.findMany({
         where,
         orderBy: { transactionDate: 'desc' },
         skip,
-        take: query.pageSize,
+        take: query.limit,
       }),
       this.prisma.transaction.count({ where }),
     ]);
 
-    return { items: items.map((t) => this.maskForRole(user, t)), page: query.page, pageSize: query.pageSize, total };
+    return { items: items.map((t) => this.maskForRole(user, t)), page: query.page, limit: query.limit, total };
   }
 
   async getById(user: AuthenticatedUser, id: string) {

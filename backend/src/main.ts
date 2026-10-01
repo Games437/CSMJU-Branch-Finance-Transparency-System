@@ -19,11 +19,14 @@ async function bootstrap() {
   // versioned endpoint lives under /api/v1, set at this ONE point
   // instead of repeating 'api/v1' inside every @Controller() decorator
   // (5 separate places previously — easy to typo or forget on a new
-  // controller). 'health' is excluded because api-conventions.md's own
-  // public_endpoints example lists "GET /health" with no version
-  // prefix at all — it's infrastructure plumbing, not a versioned
-  // business resource.
-  app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  // controller). 'api/health' is excluded because the real
+  // api-conventions.md §1 lists GET /api/health as one of exactly two
+  // paths that live outside /api/v1/ — it's infrastructure plumbing,
+  // not a versioned business resource. (AMENDED 2026-09-27, "ยึด repo
+  // กลาง": this used to exclude bare 'health', from an older draft doc
+  // — see health.controller.ts's own comment.)
+  //
+  app.setGlobalPrefix('api/v1', { exclude: ['api/health'] });
 
   // Base standards item #3 (api-conventions.md Section 3/5): wrap every
   // successful response as { success: true, data, meta? }, at this ONE

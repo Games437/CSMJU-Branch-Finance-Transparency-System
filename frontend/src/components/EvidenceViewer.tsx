@@ -8,6 +8,7 @@ import {
   uploadEvidence,
   type EvidenceMeta,
 } from "@/lib/api";
+import { alertClasses, tonalButtonClass } from "@/components/csmju/ui";
 
 // ============================================================================
 // Evidence display, shared by any screen where a viewer needs to see a
@@ -44,7 +45,7 @@ export function EvidenceViewer({
   canUpload = false,
 }: {
   transactionId: string;
-  externalUserId: string;
+  externalUserId: string | null;
   // Only affects the "no evidence yet" copy below (Business Rule 4.2's
   // "must have evidence before approval" applies to EXPENSE only — see
   // approvals.service.ts). Evidence itself can exist on either type
@@ -98,15 +99,15 @@ export function EvidenceViewer({
 
   return (
     <div className="mb-4">
-      <h4 className="mb-2 text-sm font-semibold text-ink">หลักฐาน/บิล</h4>
-      {loadError && <p className="mb-2 text-sm text-rust">{loadError}</p>}
-      {uploadError && <p className="mb-2 text-sm text-rust">{uploadError}</p>}
+      <h4 className="mb-2 text-label-md text-on-surface">หลักฐาน/บิล</h4>
+      {loadError && <p className="mb-2 text-body-md text-error">{loadError}</p>}
+      {uploadError && <p className="mb-2 text-body-md text-error">{uploadError}</p>}
       {evidence === null ? (
-        <p className="text-sm text-inkFaint">กำลังโหลด...</p>
+        <p className="text-body-md text-on-surface-variant">กำลังโหลด...</p>
       ) : currentEvidence ? (
         <EvidencePreview evidence={currentEvidence} externalUserId={externalUserId} />
       ) : (
-        <p className="mb-2 text-sm text-rust">
+        <p className={`${alertClasses.warning} mb-2`}>
           {transactionType === "EXPENSE"
             ? "ยังไม่มีหลักฐานแนบ — ต้องมีหลักฐานก่อนจึงจะอนุมัติได้ (ตามกฎการเงินข้อ 4.2)"
             : "ยังไม่มีหลักฐานแนบ (ไม่บังคับสำหรับรายรับ)"}
@@ -115,7 +116,7 @@ export function EvidenceViewer({
 
       {canUpload && (
         <div className="mt-2">
-          <label className="inline-block cursor-pointer rounded-full border border-jade px-3 py-1 text-xs text-jade hover:bg-jadeSoft">
+          <label className={`${tonalButtonClass} inline-flex cursor-pointer`}>
             {uploading ? "กำลังอัปโหลด..." : currentEvidence ? "แทนที่ไฟล์ใหม่" : "อัปโหลดไฟล์"}
             <input
               ref={fileInputRef}
@@ -126,14 +127,14 @@ export function EvidenceViewer({
               onChange={handleFileChange}
             />
           </label>
-          <p className="mt-1 text-xs text-inkFaint">รองรับ PDF, JPEG, PNG, WEBP ขนาดไม่เกิน 10MB</p>
+          <p className="mt-1 text-caption text-on-surface-variant">รองรับ PDF, JPEG, PNG, WEBP ขนาดไม่เกิน 10MB</p>
         </div>
       )}
     </div>
   );
 }
 
-function EvidencePreview({ evidence, externalUserId }: { evidence: EvidenceMeta; externalUserId: string }) {
+function EvidencePreview({ evidence, externalUserId }: { evidence: EvidenceMeta; externalUserId: string | null }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -150,23 +151,28 @@ function EvidencePreview({ evidence, externalUserId }: { evidence: EvidenceMeta;
   }, [evidence.id, externalUserId]);
 
   return (
-    <div className="flex items-center gap-3 rounded-passbook border border-paperLine bg-paper p-2">
+    <div className="flex items-center gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-2">
       {objectUrl && evidence.mimeType.startsWith("image/") ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={objectUrl} alt={evidence.originalFilename} className="h-16 w-16 rounded object-cover" />
+        <img src={objectUrl} alt={evidence.originalFilename} className="h-16 w-16 rounded-lg object-cover" />
       ) : (
-        <span className="flex h-16 w-16 items-center justify-center rounded bg-jadeSoft text-xs text-jade">
+        <span className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary-container/10 text-label-sm text-primary-container">
           PDF
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-ink">{evidence.originalFilename}</p>
-        <p className="text-xs text-inkFaint">
+        <p className="truncate text-body-md text-on-surface">{evidence.originalFilename}</p>
+        <p className="text-caption text-on-surface-variant">
           เวอร์ชัน {evidence.version} · {(evidence.sizeBytes / 1024).toFixed(0)} KB
         </p>
       </div>
       {objectUrl && (
-        <a href={objectUrl} target="_blank" rel="noreferrer" className="shrink-0 text-xs text-jade underline">
+        <a
+          href={objectUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="shrink-0 text-label-sm text-primary-container underline"
+        >
           เปิดดู
         </a>
       )}

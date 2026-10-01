@@ -3,9 +3,11 @@
 // header, matching the backend's DevHeaderAuthStrategy (see backend's
 // src/auth/strategies/dev-header-auth.strategy.ts). This is NOT how real
 // auth will work — the real CSMJU SSO handoff is still unresolved
-// (Requirements doc Section 35 #1/#2). When that's decided, only this
-// file's header-attaching logic should need to change; components below
-// call `apiFetch` without knowing how identity gets attached.
+// (Requirements doc Section 35 #1/#2; a real Core Hub SSO integration was
+// tried and then reverted back to this stub — see auth.module.ts). When
+// the real mechanism is decided, only this file's header-attaching logic
+// should need to change; components below call `apiFetch` without
+// knowing how identity gets attached.
 // ============================================================================
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api/v1";
@@ -14,6 +16,12 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    // Optional: the backend envelope's `error.code` (see
+    // HttpExceptionFilter), when the response body had one. Purely
+    // additive — existing callers that only read `.status`/`.message`
+    // are unaffected. Used by lib/error-mapping.ts to pick the right UI
+    // treatment per the verified error-code table.
+    public code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -39,23 +47,20 @@ export async function apiFetch<T>(
 
   if (!response.ok) {
     let message = `Request failed with status ${response.status}`;
+    let code: string | undefined;
     try {
       const body = await response.json();
-      // FIX (found while adding base standards item #5 below): since the
-      // backend's HttpExceptionFilter (base standards item #4) shipped,
-      // every error body is { success: false, error: { code, message,
-      // details? } } — the message moved off the top level into
-      // `error.message`. This line still read `body?.message`, which is
-      // now always undefined, so every error surfaced here fell back to
-      // the generic "Request failed with status NNN" instead of the
-      // backend's actual (Thai, specific) message. `body?.message` is
-      // kept as a fallback only in case some response is ever missed by
-      // the global filter.
+      // Since the backend's HttpExceptionFilter (base standards item #4)
+      // shipped, every error body is { success: false, error: { code,
+      // message, details? } } — the message moved off the top level into
+      // `error.message`. `body?.message` is kept as a fallback only in
+      // case some response is ever missed by the global filter.
       message = body?.error?.message ?? body?.message ?? message;
+      code = body?.error?.code;
     } catch {
       // response body wasn't JSON — keep the generic message
     }
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, message, code);
   }
 
   // 204 No Content or empty body
@@ -67,62 +72,15 @@ export async function apiFetch<T>(
 }
 
 /**
- * BUGFIX: every endpoint response is wrapped by the backend's
+ * Every endpoint response is wrapped by the backend's
  * ResponseEnvelopeInterceptor (base standards item #3) as
  * { success, data } or, for paginated list endpoints, as
- * { success, data, meta: { page, per_page, total } } — see
+ * { success, data, meta: { page, limit, total, totalPages } } — see
  * backend's src/common/interceptors/response-envelope.interceptor.ts.
- * apiFetch previously returned that raw envelope as-is instead of the
- * unwrapped payload the rest of this file's types (YearAccountListItem[],
- * MeResponse, TransactionListResponse, ...) actually describe, so every
- * caller — including the original dashboard/expenses pages, not just the
- * newer Approvals/Year Account Detail/Audit Log pages — got the envelope
- * object where it expected the real value (e.g. `yearAccounts.map` failing
- * because `yearAccounts` was `{success, data}`, not the array itself).
  * This reconstructs the pagination shape ({items, page, pageSize, total})
  * this file's list responses are typed as, from the wire's {data, meta}
  * shape, and otherwise just returns `data`.
  */
-/**
- * Base standards item #5 (backend's response-envelope.interceptor.ts):
- * the backend now sends every field as snake_case, with the user-identity
- * field specifically renamed to `username` (data-dictionary.md Section 1
- * requires that exact name; mechanical snake_casing alone would have
- * produced `external_user_id`). This is the frontend's mirror-image
- * reverse transform, applied at the same one point unwrapEnvelope()
- * already occupies, so every existing component/page here keeps reading
- * `.yearAccountId`, `.createdAt`, `.externalUserId`, etc. exactly as
- * before — nothing below this file needed to change for the wire format
- * to become spec-compliant.
- */
-const WIRE_KEY_OVERRIDES: Record<string, string> = {
-  username: "externalUserId",
-};
-
-function fromWireKey(key: string): string {
-  if (WIRE_KEY_OVERRIDES[key]) {
-    return WIRE_KEY_OVERRIDES[key];
-  }
-  return key.replace(/_([a-z0-9])/g, (_match, ch: string) => ch.toUpperCase());
-}
-
-function fromWireFormat(value: unknown): unknown {
-  if (value === null || value === undefined) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => fromWireFormat(item));
-  }
-  if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      result[fromWireKey(key)] = fromWireFormat(val);
-    }
-    return result;
-  }
-  return value;
-}
-
 function unwrapEnvelope(parsed: unknown): unknown {
   if (
     typeof parsed !== "object" ||
@@ -135,18 +93,22 @@ function unwrapEnvelope(parsed: unknown): unknown {
     return parsed;
   }
 
-  const envelope = parsed as { success: boolean; data: unknown; meta?: { page: number; per_page: number; total: number } };
+  const envelope = parsed as {
+    success: boolean;
+    data: unknown;
+    meta?: { page: number; limit: number; total: number; totalPages: number };
+  };
 
   if (envelope.meta) {
     return {
-      items: fromWireFormat(envelope.data),
+      items: envelope.data,
       page: envelope.meta.page,
-      pageSize: envelope.meta.per_page,
+      pageSize: envelope.meta.limit,
       total: envelope.meta.total,
     };
   }
 
-  return fromWireFormat(envelope.data);
+  return envelope.data;
 }
 
 // ----------------------------------------------------------------------

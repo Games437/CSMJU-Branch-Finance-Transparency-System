@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { Transaction } from "@/lib/api";
-import { statusBadgeClasses, statusLabelTh } from "@/lib/status-styles";
+import { StatusBadge } from "@/components/csmju/StatusBadge";
+import { cardClass } from "@/components/csmju/ui";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 
 // ============================================================================
@@ -33,16 +34,16 @@ const typeLabelTh: Record<Transaction["type"], string> = {
 
 interface Props {
   transaction: Transaction;
-  externalUserId: string;
   // Both optional and both required together to enable upload: a caller
   // that doesn't pass them (e.g. a screen with no signed-in identity handy)
   // just gets the pre-2026-09-27 read-only behavior back, canUpload below
   // resolves to false either way.
   currentUserId?: string;
+  externalUserId?: string | null;
   role?: "STUDENT" | "TREASURER" | "BRANCH_HEAD";
 }
 
-export function TransactionRow({ transaction, externalUserId, currentUserId, role }: Props) {
+export function TransactionRow({ transaction, currentUserId, externalUserId, role }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   // Same ownership rule ExpenseRow.tsx uses for its own upload control
@@ -56,30 +57,26 @@ export function TransactionRow({ transaction, externalUserId, currentUserId, rol
     role === "TREASURER" && transaction.createdBy === currentUserId && transaction.status === notYetDecidedStatus;
 
   return (
-    <div className="rounded-passbook border-2 border-paperLine bg-white">
+    <div className={cardClass}>
       <button
+        type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center justify-between gap-3 p-4 text-left"
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-surface/50"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium text-ink">{transaction.description}</p>
-          <p className="text-xs text-inkFaint">
+          <p className="truncate text-body-md font-medium text-on-surface">{transaction.description}</p>
+          <p className="text-caption text-on-surface-variant">
             {dateFmt.format(new Date(transaction.transactionDate))} · {typeLabelTh[transaction.type]}
             {transaction.category ? ` · ${transaction.category}` : ""}
             {transaction.sourceType === "LINE_REPORT" ? " · แจ้งผ่าน LINE" : ""}
           </p>
         </div>
-        <span
-          className={`font-mono font-semibold ${transaction.type === "EXPENSE" ? "text-rust" : "text-jade"}`}
-        >
+        <span className={`tabular-nums font-semibold ${transaction.type === "EXPENSE" ? "text-error" : "text-emerald-700"}`}>
           {transaction.type === "EXPENSE" ? "-" : "+"}
           {thb.format(Number(transaction.amount))}
         </span>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClasses(transaction.status)}`}
-        >
-          {statusLabelTh(transaction.status)}
-        </span>
+        <StatusBadge status={transaction.status} />
       </button>
 
       {expanded && transaction.type !== "ADJUSTMENT" && (
@@ -90,10 +87,10 @@ export function TransactionRow({ transaction, externalUserId, currentUserId, rol
         // here. ADJUSTMENT is excluded only because that flow doesn't
         // exist yet (see evidence.service.ts's note on it), not because
         // it's been decided to exclude it once it does.
-        <div className="border-t border-paperLine p-4">
+        <div className="border-t border-outline-variant/40 p-4">
           <EvidenceViewer
             transactionId={transaction.id}
-            externalUserId={externalUserId}
+            externalUserId={externalUserId ?? null}
             transactionType={transaction.type === "INCOME" ? "INCOME" : "EXPENSE"}
             canUpload={canUpload}
           />

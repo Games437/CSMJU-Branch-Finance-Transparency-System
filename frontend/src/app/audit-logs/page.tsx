@@ -10,6 +10,10 @@ import {
   type YearAccountListItem,
 } from "@/lib/api";
 import { AuditLogRow } from "@/components/AuditLogRow";
+import { PageHeader } from "@/components/csmju/PageHeader";
+import { EmptyState } from "@/components/csmju/EmptyState";
+import { SkeletonRows } from "@/components/csmju/Skeleton";
+import { alertClasses, inputClass, labelClass, secondaryButtonClass } from "@/components/csmju/ui";
 
 // ============================================================================
 // Audit Log Viewer — Branch Head only (backend's permission-matrix.ts:
@@ -107,38 +111,35 @@ export default function AuditLogsPage() {
 
   if (!externalUserId) {
     return (
-      <main className="mx-auto max-w-4xl p-6">
-        <p className="text-inkFaint">เลือกผู้ใช้งานจากแถบด้านบนเพื่อเข้าสู่ระบบ (dev only)</p>
-      </main>
+      <EmptyState title="เลือกผู้ใช้งานจากเมนูด้านข้างเพื่อเข้าสู่ระบบ" description="(dev only)" />
     );
   }
 
   if (role !== "BRANCH_HEAD") {
     return (
-      <main className="mx-auto max-w-4xl p-6">
-        <p className="text-inkFaint">
-          หน้านี้สำหรับหัวหน้าสาขาเท่านั้น (ผู้ใช้ปัจจุบันมีบทบาท {role ?? "ไม่ทราบ"})
-        </p>
-      </main>
+      <EmptyState
+        title="หน้านี้สำหรับหัวหน้าสาขาเท่านั้น"
+        description={`ผู้ใช้ปัจจุบันมีบทบาท ${role ?? "ไม่ทราบ"}`}
+      />
     );
   }
 
   const totalPages = logList ? Math.max(1, Math.ceil(logList.total / PAGE_SIZE)) : 1;
+  const hasFilters = yearFilter !== "ALL" || actionFilter !== "ALL";
 
   return (
-    <main className="mx-auto max-w-4xl p-6">
-      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">ประวัติการตรวจสอบ (Audit Log)</h1>
-      <p className="mb-6 text-sm text-inkFaint">บันทึกการกระทำทั้งหมดในระบบ สำหรับหัวหน้าสาขาเท่านั้น</p>
+    <>
+      <PageHeader title="ประวัติการตรวจสอบ (Audit Log)" description="บันทึกการกระทำทั้งหมดในระบบ สำหรับหัวหน้าสาขาเท่านั้น" />
 
-      {error && <div className="mb-6 rounded-passbook border-2 border-rust bg-rustSoft p-4 text-rust">{error}</div>}
+      {error && <div className={alertClasses.error}>{error}</div>}
 
-      <div className="mb-4 flex flex-wrap gap-3">
-        <label className="text-sm text-inkFaint">
-          ชั้นปี
+      <div className="flex flex-wrap gap-4">
+        <label>
+          <span className={labelClass}>ชั้นปี</span>
           <select
             value={yearFilter}
             onChange={(e) => setYearFilter(e.target.value)}
-            className="ml-2 rounded border border-paperLine bg-white px-2 py-1 text-ink"
+            className={`${inputClass} w-auto`}
           >
             <option value="ALL">ทั้งหมด</option>
             {yearAccounts.map((a) => (
@@ -148,12 +149,12 @@ export default function AuditLogsPage() {
             ))}
           </select>
         </label>
-        <label className="text-sm text-inkFaint">
-          ประเภทเหตุการณ์
+        <label>
+          <span className={labelClass}>ประเภทเหตุการณ์</span>
           <select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
-            className="ml-2 rounded border border-paperLine bg-white px-2 py-1 text-ink"
+            className={`${inputClass} w-auto`}
           >
             <option value="ALL">ทั้งหมด</option>
             {KNOWN_ACTIONS.map((a) => (
@@ -165,13 +166,16 @@ export default function AuditLogsPage() {
         </label>
       </div>
 
-      {loading && <p className="text-inkFaint">กำลังโหลด...</p>}
+      {loading && <SkeletonRows count={5} />}
 
       {!loading && logList && (
         <>
           <div className="space-y-3">
             {logList.items.length === 0 ? (
-              <p className="text-inkFaint">ไม่พบบันทึกตามเงื่อนไขที่เลือก</p>
+              <EmptyState
+                title={hasFilters ? "ไม่พบบันทึกตามเงื่อนไขที่เลือก" : "ยังไม่มีบันทึกในระบบ"}
+                description={hasFilters ? "ลองเปลี่ยนตัวกรองด้านบน" : undefined}
+              />
             ) : (
               logList.items.map((entry) => (
                 <AuditLogRow key={entry.id} entry={entry} externalUserId={externalUserId} />
@@ -180,21 +184,21 @@ export default function AuditLogsPage() {
           </div>
 
           {logList.total > PAGE_SIZE && (
-            <div className="mt-4 flex items-center justify-between text-sm text-inkFaint">
+            <div className="flex items-center justify-between text-body-md text-on-surface-variant">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page <= 1}
-                className="rounded-full border border-paperLine px-3 py-1 disabled:opacity-40"
+                className={secondaryButtonClass}
               >
                 ก่อนหน้า
               </button>
-              <span>
+              <span className="tabular-nums">
                 หน้า {page} / {totalPages} (ทั้งหมด {logList.total} รายการ)
               </span>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
-                className="rounded-full border border-paperLine px-3 py-1 disabled:opacity-40"
+                className={secondaryButtonClass}
               >
                 ถัดไป
               </button>
@@ -202,6 +206,6 @@ export default function AuditLogsPage() {
           )}
         </>
       )}
-    </main>
+    </>
   );
 }

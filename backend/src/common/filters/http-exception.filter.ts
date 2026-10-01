@@ -21,22 +21,28 @@ import { Response } from 'express';
  * or controller.
  *
  * Status -> code mapping (api-conventions.md Section 4 table):
+ *   400 (validation failure)  -> VALIDATION_ERROR
  *   401 UnauthorizedException -> UNAUTHORIZED
  *   403 ForbiddenException    -> FORBIDDEN
  *   404 NotFoundException     -> NOT_FOUND
  *   409 ConflictException     -> CONFLICT
- *   422 (validation failure)  -> VALIDATION_ERROR
  *   anything unhandled        -> INTERNAL_ERROR (500)
  *
- * BadRequestException is special-cased instead of mapped by its
- * default 400 status: grep confirms the ONLY source of
- * BadRequestException anywhere in this codebase is Nest's
- * ValidationPipe (app.useGlobalPipes in main.ts) — no controller or
- * service throws it directly. api-conventions.md's standard code list
- * has no 400 entry at all; 422 VALIDATION_ERROR is the spec's slot for
- * "request data is invalid" (Section 4 table, row 4). So this filter
- * both recodes AND re-statuses a caught BadRequestException to 422,
- * rather than leaving Nest's default 400 on the wire.
+ * AMENDED 2026-09-27 (team decision: "ยึด repo กลาง"): this used to
+ * re-status validation failures to 422, against an older draft doc.
+ * The real api-conventions.md is explicit ("Use VALIDATION_ERROR with
+ * 400, not 422 — this matches NestJS ValidationPipe defaults so no
+ * custom exception filter is needed") — so this now keeps Nest's own
+ * default 400 instead of remapping it, while still recoding it to the
+ * standard `VALIDATION_ERROR` envelope shape.
+ *
+ * BadRequestException is still special-cased for its MESSAGE shape
+ * (see resolveValidationError below): grep confirms the ONLY source of
+ * BadRequestException anywhere in this codebase is Nest's ValidationPipe
+ * (app.useGlobalPipes in main.ts) — no controller or service throws it
+ * directly — so every BadRequestException reaching this filter is a
+ * validation failure whose default message shape needs flattening into
+ * `{ code: 'VALIDATION_ERROR', message, details }`.
  *
  * Anything that is not an HttpException at all (a thrown plain Error,
  * a Prisma error that escaped its service, etc.) is logged server-side
@@ -104,6 +110,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
    * whenever more than one field fails at once). details.errors keeps
    * the full list so a client/dev can see every failing field, while
    * message surfaces just the first one for a short human-readable line.
+   *
+   * status stays 400 (Nest's own default) — see this file's header
+   * comment for why this no longer re-statuses to 422.
    */
   private resolveValidationError(exception: BadRequestException): {
     status: number;
@@ -119,7 +128,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const messages = Array.isArray(rawMessage) ? rawMessage.map(String) : [String(rawMessage)];
 
     return {
-      status: HttpStatus.UNPROCESSABLE_ENTITY,
+      status: HttpStatus.BAD_REQUEST,
       code: 'VALIDATION_ERROR',
       message: messages[0] ?? 'ข้อมูล request ไม่ถูกต้อง',
       details: { errors: messages },
@@ -143,7 +152,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
         return 'NOT_FOUND';
       case HttpStatus.CONFLICT:
         return 'CONFLICT';
-      case HttpStatus.UNPROCESSABLE_ENTITY:
+      case HttpStatus.BAD_REQUEST:
+        // Reachable only if some future HttpException is thrown directly
+        // with a 400 status outside ValidationPipe (resolveValidationError
+        // above handles the actual BadRequestException case already, before
+        // this switch is ever reached for it).
         return 'VALIDATION_ERROR';
       default:
         // No other HttpException status is thrown anywhere in this
